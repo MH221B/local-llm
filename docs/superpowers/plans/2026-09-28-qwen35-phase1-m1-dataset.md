@@ -932,7 +932,7 @@ git commit -m "feat(dataset): OpenHermes and ToolACE adapters"
 - Create: `tools/dataset/adapters/plainmath.py`
 - Create: `tools/dataset/adapters/codefeedback.py`
 
-- [ ] **Step 1: Write `tools/dataset/adapters/plainmath.py`**
+- [x] **Step 1: Write `tools/dataset/adapters/plainmath.py`**
 
 ```python
 """NuminaMath-1.5 and gsm8k. Plain columns plus the validity flags (spec section 7.1)."""
@@ -990,7 +990,7 @@ Run (from the repo root):
 ```
 Expected: `numina-5 {'problem_type': 'algebra', 'synthetic': False}`, `None`, then `#### 2`.
 
-- [ ] **Step 2: Write `tools/dataset/adapters/codefeedback.py`**
+- [x] **Step 2: Write `tools/dataset/adapters/codefeedback.py`**
 
 ```python
 """m-a-p/CodeFeedback-Filtered-Instruction: query/answer/resource/lang columns."""
@@ -1028,7 +1028,7 @@ Run (from the repo root):
 ```
 Expected: `codefeedback-9 {'lang': 'python', 'resource': 'codefeedback'} | def rev(s): return s` then `None`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```powershell
 git add tools/dataset/adapters/plainmath.py tools/dataset/adapters/codefeedback.py
