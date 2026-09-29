@@ -1751,8 +1751,9 @@ MIN_ANSWER_TOKENS = 16
 MAX_ANSWER_TOKENS = 16384
 LOOP_RATIO_MAX = 0.05
 
-# The student template stores the CoT as literal ASCII tags; confirmed against the
-# GGUF template in Task 16 Step 2 (spec sections 5 and 11.2).
+# The student template stores the CoT as angle-bracket delimited tags, read from the
+# GGUF's own chat template in Task 15 rather than assumed: the template writes
+# '<think>' / '</think>', each on its own line.
 THINK_OPEN = "<think>"
 THINK_CLOSE = "</think>"
 
@@ -2284,7 +2285,7 @@ git commit -m "feat(dataset): M1 pipeline CLI"
 This task settles the think-tag spelling the spec defers, using the student's real
 template rather than an assumption. It must pass before the full run in Task 16.
 
-- [ ] **Step 1: Write `tools/dataset/tokenserver.py`**
+- [x] **Step 1: Write `tools/dataset/tokenserver.py`**
 
 ```python
 """Client for a local llama-server: /props for the chat template, /tokenize for counts."""
@@ -2350,7 +2351,7 @@ check requires the server, see Task 16 Step 1):
 ```
 Expected: a non-zero template length and a small token count.
 
-- [ ] **Step 2: Write `tools/dataset/render.py`**
+- [x] **Step 2: Write `tools/dataset/render.py`**
 
 ```python
 """Render gate: apply the student's real chat template to a sample (spec section 11.2)."""
@@ -2391,14 +2392,14 @@ def strip_image_data(messages: list[dict]) -> list[dict]:
     return out
 
 
-def run(*, dataset: Path, template_path: Path, sample: int) -> int:
-    template = template_path.read_text(encoding="utf-8")
+def run(*, dataset: Path, template: Path, sample: int) -> int:
+    template_text = Path(template).read_text(encoding="utf-8")
     rows = list(iter_jsonl(dataset))[:sample]
     failures = 0
     tags = {"open": 0, "close": 0}
     for row in rows:
         try:
-            text = render(template, strip_image_data(row["messages"]))
+            text = render(template_text, strip_image_data(row["messages"]))
         except TemplateError as exc:
             failures += 1
             print(f"FAIL {row['id']}: {exc}")
@@ -2412,7 +2413,7 @@ def run(*, dataset: Path, template_path: Path, sample: int) -> int:
              {"role": "assistant",
               "content": f"{THINK_OPEN}\nOne plus one is two.\n{THINK_CLOSE}\n\nTwo."}]
     try:
-        probe_text = render(template, strip_image_data(probe))
+        probe_text = render(template_text, strip_image_data(probe))
         probe_ok = (THINK_OPEN in probe_text and THINK_CLOSE in probe_text
                     and "One plus one is two." in probe_text)
     except TemplateError as exc:
@@ -2422,7 +2423,7 @@ def run(*, dataset: Path, template_path: Path, sample: int) -> int:
     # The student must mimic the teacher's reasoning process, so the generation prompt
     # itself has to open a think block (spec sections 5 and 11.2).
     try:
-        gen_text = render(template, strip_image_data(probe[:1]), add_generation_prompt=True)
+        gen_text = render(template_text, strip_image_data(probe[:1]), add_generation_prompt=True)
         thinking_ok = THINK_OPEN in gen_text
     except TemplateError as exc:
         thinking_ok = False
@@ -2453,7 +2454,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```powershell
 git add tools/dataset/tokenserver.py tools/dataset/render.py

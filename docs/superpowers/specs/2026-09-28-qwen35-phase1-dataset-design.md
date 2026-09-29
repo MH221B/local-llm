@@ -243,7 +243,11 @@ Decisions that apply to both record families:
   `assistant_only_loss` and `train_on_responses_only` work off role boundaries, so the
   tags are data, not framing.
 - **The exact tag spelling is settled before generation**, by the render check in
-  §11.2 (current GGUF: `<think>` / `</think>`).
+  §11.2. Verified against the shipped GGUF's own chat template: the template emits
+  `<think>` / `</think>`, both angle-bracket delimited, each on its own line. The open tag
+  earlier appeared in `filters.py` / `render.py` without its `<`, which the render gate
+  caught (200 rows: 0 template failures, a stored block survives round-trip, the
+  generation prompt opens the block, tags balanced). The constants now match the template.
 - **Reasoning is stored verbatim.** The teacher runs with `enable_thinking: true` and
   its completion, think block included, becomes the assistant content string. The
   student mimics the teacher's process because the tags are training data, not framing

@@ -17,14 +17,11 @@ MIN_ANSWER_TOKENS = 16
 MAX_ANSWER_TOKENS = 16384
 LOOP_RATIO_MAX = 0.05
 
-# The student template stores the CoT as literal ASCII tags; confirmed against the
-# GGUF template in Task 16 Step 2 (spec sections 5 and 11.2). The open tag is followed by
-# content on the same line (spec section 5), so the marker alone is what to count.
-#
-# Known limitation: bare-substring counting cannot tell a real tag from the word
-# "thinking" in prose ("I was thinking about it"). That only affects M2 review of teacher
-# text; M1 prompts carry no tags at all.
-THINK_OPEN = " thinking"
+# The student template stores the CoT as angle-bracket delimited tags, read from the
+# GGUF's own chat template in Task 15 rather than assumed: the template writes
+# '<think>' / '</think>', each on its own line. The earlier open constant
+# here was missing its '<', which is what made substring counting look unreliable.
+THINK_OPEN = "<think>"
 THINK_CLOSE = "</think>"
 
 # Spec section 9.4's language filter: reject rows dominated by non-Latin scripts.
@@ -104,7 +101,7 @@ if __name__ == "__main__":
     print("prompt empty:", prompt_reject_reason("", 0))
     print("clean:", example_reject_reason(mk("A clear worked answer.")))
     print("refusal:", example_reject_reason(mk("I cannot help with that request.")))
-    print("unbalanced:", example_reject_reason(mk(" thinkingreasoning without a close tag")))
+    print("unbalanced:", example_reject_reason(mk("<think>reasoning without a close tag")))
     print("short:", example_reject_reason(mk("ok", tokens=3)))
     print("loop:", example_reject_reason(mk(" ".join(["a b c d e f g h"] * 30))))
     print("non-english:", example_reject_reason(mk("这是一段中文回答，用于测试语言过滤。")))
