@@ -1134,7 +1134,7 @@ other source's. The four VQA configs additionally form the §8 vision probe — 
 keeps their short reference answers for the holdout (Task 17), which is the one place a
 prebuilt answer survives, as an eval label rather than a training target.
 
-- [ ] **Step 1: Write `tools/dataset/adapters/cauldron.py`**
+- [x] **Step 1: Write `tools/dataset/adapters/cauldron.py`**
 
 ```python
 """HuggingFaceM4/the_cauldron configs. Images ride on prompts; the VQA builder keeps reference answers for the holdout only."""
@@ -1175,17 +1175,20 @@ def _text_pair(texts: list) -> tuple[str, str] | None:
     """Cauldron `texts` are single-element lists of {user, assistant, source} structs.
 
     Plain [prompt, response] lists are accepted too, so hand-built fixtures stay usable.
+    Values must be strings: str()-coercing a dict or a number would write a Python repr
+    into the prompt, which no filter can tell apart from real content.
     """
     if not texts:
         return None
     first = texts[0]
     if isinstance(first, dict):
-        prompt = str(first.get("user") or "").strip()
-        response = str(first.get("assistant") or "").strip()
+        user, assistant = first.get("user"), first.get("assistant")
     else:
-        if len(texts) < 2:
-            return None
-        prompt, response = str(texts[0]).strip(), str(texts[1]).strip()
+        user = texts[0]
+        assistant = texts[1] if len(texts) > 1 else None
+    if not isinstance(user, str) or not isinstance(assistant, str):
+        return None
+    prompt, response = user.strip(), assistant.strip()
     if not prompt or not response:
         return None
     return prompt, response
@@ -1262,7 +1265,7 @@ Run (from the repo root):
 ```
 Expected: `cauldron-chart2text-4 parts: ['text', 'image']` then `None` twice.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```powershell
 git add tools/dataset/adapters/cauldron.py
