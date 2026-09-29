@@ -1595,7 +1595,7 @@ git commit -m "feat(dataset): frozen source table, quota allocator, domain rules
 - Create: `tools/dataset/dedup.py`
 - Create: `tools/dataset/filters.py`
 
-- [ ] **Step 1: Write `tools/dataset/dedup.py`**
+- [x] **Step 1: Write `tools/dataset/dedup.py`**
 
 ```python
 """Exact and near-duplicate rejection, plus image-sha collapse."""
@@ -1684,7 +1684,7 @@ Run (from the repo root):
 ```
 Expected: `None`, `duplicate_prompt`, `None`, then `True`, `True`, `False`.
 
-- [ ] **Step 2: Write `tools/dataset/filters.py`**
+- [x] **Step 2: Write `tools/dataset/filters.py`**
 
 ```python
 """Reject predicates.
@@ -1793,7 +1793,7 @@ Run (from the repo root):
 Expected: `prompt clean: None`, `prompt empty: empty_prompt`, then `clean: None`,
 `refusal`, `unbalanced`, `short`, `loop`, and `non_english` response reasons.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```powershell
 git add tools/dataset/dedup.py tools/dataset/filters.py
