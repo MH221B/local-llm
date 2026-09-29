@@ -857,7 +857,7 @@ git commit -m "feat(dataset): smoltalk adapter"
 **Files:**
 - Create: `tools/dataset/adapters/sharegpt.py`
 
-- [ ] **Step 1: Write `tools/dataset/adapters/sharegpt.py`**
+- [x] **Step 1: Write `tools/dataset/adapters/sharegpt.py`**
 
 ```python
 """`conversations` shaped sources: OpenHermes-2.5 (roleplay slice) and ToolACE."""
@@ -903,7 +903,9 @@ if __name__ == "__main__":
           "conversations": [{"from": "human", "value": "Hello<|im_end|>"},
                             {"from": "gpt", "value": "Hi there."}]}
     ex = build_openhermes(rp, 3, ctx)
-    print(ex.id, [m["role"] for m in ex.messages], repr(ex.messages[0]["content"][0]["text"]))
+    sys_content = ex.messages[0]["content"]
+    sys_text = sys_content if isinstance(sys_content, str) else sys_content[0]["text"]
+    print(ex.id, [m["role"] for m in ex.messages], repr(sys_text))
     print("non-roleplay dropped:", build_openhermes({"category": "coding", "conversations": []}, 1, ctx))
     print("unterminated dropped:", build_openhermes(
         {"category": "roleplay", "conversations": [{"from": "human", "value": "hi"}]}, 2, ctx))
@@ -915,7 +917,7 @@ Run (from the repo root):
 Expected: the id, `['system', 'user', 'assistant']`, the system prompt text with markup
 stripped, then `None` twice.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```powershell
 git add tools/dataset/adapters/sharegpt.py
