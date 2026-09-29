@@ -77,7 +77,7 @@ predictable line of output.
 - Create: `tools/dataset/__init__.py`
 - Create: `tools/dataset/canonical.py`
 
-- [ ] **Step 0: Ensure the project is a git repository (one-time)**
+- [x] **Step 0: Ensure the project is a git repository (one-time)**
 
 Every task commits, so version control must exist before Task 1's commit.
 
@@ -88,14 +88,14 @@ if ($LASTEXITCODE -ne 0) { git init }
 
 Expected: the check succeeds, or `Initialized empty Git repository in ...`.
 
-- [ ] **Step 1: Create the conda environment and install dependencies**
+- [x] **Step 1: Create the conda environment and install dependencies**
 
 ```powershell
 & "$HOME\miniconda3\Scripts\conda.exe" create -y -n dataset python=3.12
 & "$HOME\miniconda3\envs\dataset\python.exe" -m pip install datasets pillow jinja2
 ```
 
-- [ ] **Step 2: Verify the environment imports its dependencies**
+- [x] **Step 2: Verify the environment imports its dependencies**
 
 Run:
 ```powershell
@@ -103,11 +103,11 @@ Run:
 ```
 Expected: `deps ok`
 
-- [ ] **Step 3: Create the package marker**
+- [x] **Step 3: Create the package marker**
 
 Create `tools/dataset/__init__.py` as an empty file.
 
-- [ ] **Step 4: Write `tools/dataset/canonical.py`**
+- [x] **Step 4: Write `tools/dataset/canonical.py`**
 
 ```python
 """Canonical records. Adapters emit Example; the M1 pipeline persists Prompt (spec section 5)."""
@@ -377,7 +377,7 @@ Run (from the repo root):
 ```
 Expected: `good: []`, `bad: 2 problems` — `nope` is not a domain, and the only message is a `user` turn, so the example has no assistant reply — then `prompt: [] ['user']`, proving the prebuilt answer reduces to a prompt.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add tools/dataset/__init__.py tools/dataset/canonical.py
