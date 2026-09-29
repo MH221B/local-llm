@@ -1426,7 +1426,7 @@ git commit -m "feat(dataset): uncensored prompt-seed harvest"
 - Create: `tools/dataset/sources.py`
 - Create: `tools/dataset/domains.py`
 
-- [ ] **Step 1: Write `tools/dataset/sources.py`**
+- [x] **Step 1: Write `tools/dataset/sources.py`**
 
 ```python
 """The frozen source table (spec section 7) and the M1 prompt quota allocator."""
@@ -1525,7 +1525,7 @@ entry in this table (its prompts come from Task 10's seeds). With seeds present,
 `downsample` trims the accepted pool to the full four-domain 30 / 30 / 20 / 20 mix. If
 the pool is not 39,000, a cap above contradicts the spec — fix the cap, not the printout.
 
-- [ ] **Step 2: Write `tools/dataset/domains.py`**
+- [x] **Step 2: Write `tools/dataset/domains.py`**
 
 ```python
 """Domain assignment. Sources are single-domain; the table classifies mixed sources."""
@@ -1580,7 +1580,7 @@ Run (from the repo root):
 Expected: `reasoning`, `coding`, `roleplay` — declared domains are never overridden, and
 rows from mixed/unmapped sources use the keyword table.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```powershell
 git add tools/dataset/sources.py tools/dataset/domains.py
