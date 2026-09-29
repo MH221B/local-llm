@@ -217,6 +217,21 @@ manifest reports separately, so M3 can weigh prebuilt observations against inven
 regardless of turn count, so the §7 caps and the 39,000-candidate budget are unchanged.
 The cost shows up as tokens, not rows, and §12 is re-costed accordingly.
 
+**Scope note — this contract is M2+, not M1.** The trajectory schema above is a
+forward contract. The M1 implementation plan is deliberately single-turn: it ingests
+the tool-calling and chat sources, parses their full shape, and reduces every row to
+its first user turn. `base.sharegpt_turns` maps only the four conversational roles, so a
+`tool` role drops the row and is counted as a drop in the manifest rather than being
+silently lost.
+
+Two consequences, both intended:
+
+- Multi-turn ingestion is its own plan, written after M1 has run against the real
+  sources and the actual rate of `tool`-role rows is measured rather than assumed.
+- M1's guarantee is unaffected: with no trajectory path, "no prebuilt assistant text is
+  written" holds without a second validator mode. The trajectory record exists in this
+  spec so M2's design does not have to reopen the schema.
+
 ### 5.2 Base schema decisions
 
 Decisions that apply to both record families:

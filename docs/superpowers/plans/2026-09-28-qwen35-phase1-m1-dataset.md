@@ -784,7 +784,7 @@ git commit -m "feat(dataset): adapter protocol, helpers, and registry"
 **Files:**
 - Create: `tools/dataset/adapters/smoltalk.py`
 
-- [ ] **Step 1: Write `tools/dataset/adapters/smoltalk.py`**
+- [x] **Step 1: Write `tools/dataset/adapters/smoltalk.py`**
 
 ```python
 """HuggingFaceTB/smoltalk configs. Already in the `messages` shape (spec section 6)."""
@@ -843,7 +843,7 @@ Run (from the repo root):
 ```
 Expected: `smoltalk-metamathqa-50k-7 reasoning ['user', 'assistant']` then `dropped: None`.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```powershell
 git add tools/dataset/adapters/smoltalk.py
