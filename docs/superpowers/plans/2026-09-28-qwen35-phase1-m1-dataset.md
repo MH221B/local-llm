@@ -1285,7 +1285,7 @@ the same corpus (1,500 train / 500 held out), and exposes the trainable rows as 
 `Prompt` records for the pipeline to merge as the uncensored fourth domain. The real
 harvest runs here so source availability is validated in M1, not deferred.
 
-- [ ] **Step 1: Write `tools/dataset/seeds.py`**
+- [x] **Step 1: Write `tools/dataset/seeds.py`**
 
 ```python
 """Fetch the uncensored prompt seeds and quarantine the refusal eval slice.
@@ -1399,7 +1399,7 @@ def main(argv: list[str] | None = None) -> int:
 if __name__ == "__main__":
     sys.exit(main())
 ```
-- [ ] **Step 2: Dry run, then the real harvest**
+- [x] **Step 2: Dry run, then the real harvest**
 
 ```powershell
 & "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.seeds --dry-run
@@ -1411,7 +1411,7 @@ Expected: `seed sources: 6 total cap: 3000` then six `[dry]` lines; then one
 prebuilt half of spec §7.4; the 500 held-out rows are the §8 refusal eval slice.
 `pipeline.py` later loads `seeds/uncensored.jsonl` as the uncensored prompt column.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```powershell
 git add tools/dataset/seeds.py
