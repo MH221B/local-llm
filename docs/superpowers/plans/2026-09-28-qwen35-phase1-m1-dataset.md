@@ -1808,7 +1808,7 @@ git commit -m "feat(dataset): dedup index and reject filters"
 - Create: `tools/dataset/split.py`
 - Create: `tools/dataset/report.py`
 
-- [ ] **Step 1: Write `tools/dataset/split.py`**
+- [x] **Step 1: Write `tools/dataset/split.py`**
 
 ```python
 """Source-stratified, image-disjoint train/val split (spec section 9.6)."""
@@ -1871,6 +1871,12 @@ def downsample(records: list[Prompt], target: int, seed: int = 17) -> list[Promp
         rnd.shuffle(items)
         out.extend(items[:round(target * weights[domain] / total_weight)])
 
+    # `round` is half-to-even, so the per-domain allocations can sum to one more than
+    # target. Trim back rather than return `target + 1` from a function that says "trim".
+    if len(out) > target:
+        rnd.shuffle(out)
+        out = out[:target]
+
     if len(out) < target:
         chosen = {id(e) for e in out}
         leftovers = [e for e in records if id(e) not in chosen]
@@ -1914,7 +1920,7 @@ Expected: `train: 55 val: 6`, `image overlap: set()`, the val domain list, and
 20 per domain; with three domains present the 3:3:2 weighting renormalises exactly as
 before, while the full pipeline adds uncensored and targets 30 / 30 / 20 / 20.
 
-- [ ] **Step 2: Write `tools/dataset/report.py`**
+- [x] **Step 2: Write `tools/dataset/report.py`**
 
 ```python
 """Manifest: counts, caps, filter drops, token share, image totals (spec section 9.7)."""
@@ -1991,7 +1997,7 @@ Run (from the repo root):
 Expected: `examples: 4 token_share: {'coding': 0.5, 'reasoning': 0.5}` and
 `image_bearing_share: 0.0`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```powershell
 git add tools/dataset/split.py tools/dataset/report.py
