@@ -1,6 +1,6 @@
 # Phase 1 — Teacher inference & SFT dataset generation
 
-**Status:** design approved, revised after external review, revised 2026-09-29 for prompt-only teacher distillation, implementation not started
+**Status:** design approved, revised after external review, revised 2026-09-29 for prompt-only teacher distillation and for multi-turn trajectories (§5.1), implementation not started
 **Companion docs:** `bench/qwen35-mtp/PIPELINE.md` (Phase 1 section), `bench/qwen35-mtp/results.md`
 
 **Terminology:** Phases 1–4 follow `PIPELINE.md`. M1–M3 are the milestones *inside*
@@ -24,9 +24,10 @@ measured. Volume is not the objective.
 ## 2. Scope
 
 **In scope:** source ingestion, normalization, dedup, filtering, domain assignment,
-prompt-corpus export, teacher generation for every response, completion verification
-against unit tests and gold answers, image store, train/val split, calibration export,
-eval holdout management.
+prompt-corpus export (single-turn and multi-turn), teacher generation for every response,
+completion verification against unit tests and gold answers (turn-level and
+trajectory-level), image store, train/val split, calibration export, eval holdout
+management.
 
 **Out of scope:** image generation, preference/DPO pairs, any training, and the
 full-scale Colab run (that is M3).
@@ -50,12 +51,13 @@ datasets/qwen35-4b-sft/
   README.md                rebuild instructions
 
 tools/dataset/
-  canonical.py             Example / Prompt schema + validators
+  canonical.py             Example / Prompt / Trajectory schema + validators
   adapters/                one module per source shape
   pipeline.py              fetch -> normalize -> strip to prompt -> dedup -> filter -> split -> report
   testsets.py              unit-test seed ingest (MBPP, APPS)
-  verify.py                execute a teacher completion against a verify spec
+  verify.py                execute a teacher completion against a verify spec (single-turn and per-turn)
   generate.py              teacher generation (OpenAI-compatible client) [M2]
+  trajectory.py            multi-turn teacher loop: user/agent/tool-environment roles [M2]
   prompts/                 seed prompts, Magpie templates, domain keyword table
 ```
 
@@ -134,7 +136,90 @@ The M1 **prompt** record is the same shape with no assistant turn and an optiona
 
 `messages` never end in an assistant turn; `validate_prompt()` rejects one that does.
 
+### 5.1 Multi-turn trajectories (tool/agentic and roleplay/chat)
+
+Two columns ship natively multi-turn data, and flattening them to a first user turn
+discards the half that matters. ToolACE and Hermes-FC are call → result → continue
+dialogs: flattened, the student learns to emit a tool call but never to read its result.
+SmolTalk's `systemchats-30k` and `everyday-conversations` average 6.3 and 7.8 turns
+respectively, and roleplay consistency is a property of the conversation, not of a turn.
+
+So the schema gains a fourth role and a trajectory record. This is the **only** record
+shape that differs between columns; single-turn columns keep the shape above.
+
+```json
+{
+  "id": "toolace-0042",
+  "domain": "coding",
+  "origin": "prebuilt",
+  "source": {"name": "Team-ACE/ToolACE", "row": 42},
+  "messages": [
+    {"role": "system",    "content": "You are a function-calling assistant."},
+    {"role": "user",      "content": "Book me a table for two at 8pm."},
+    {"role": "assistant", "content": "I'll check availability.",
+     "tool_calls": [{"id": "call_1", "type": "function",
+                     "function": {"name": "book_table",
+                                  "arguments": "{\"party\": 2, \"time\": \"20:00\"}"}}]},
+    {"role": "tool",      "content": "{\"status\": \"ok\", \"confirmation\": \"T-991\"}",
+     "tool_call_id": "call_1"},
+    {"role": "assistant", "content": "Booked — confirmation T-991."}
+  ],
+  "tools": [{"type": "function", "function": {"name": "book_table", "parameters": {}}}],
+  "images": [],
+  "tokens": 312,
+  "meta": {"n_turns": 2, "has_tool_calls": true, "simulated": false}
+}
+```
+
 Decisions:
+
+- **`tool` joins `ROLES`.** `ROLES = ("system", "user", "assistant", "tool")`. Assistant
+  messages may carry `tool_calls`; `tool` messages must carry `tool_call_id` matching a
+  preceding call. This is the OpenAI function-calling shape, rendered by the student's
+  chat template, and it is what ReTool, Nemotron-SFT-Agentic-v2, and the ToolACE family
+  all use.
+- **Records end on an assistant turn.** A trajectory that ends on a `tool` result is not
+  a trainable record and is dropped: the response the student must produce is an
+  assistant turn. `validate_trajectory()` enforces this.
+- **`validate_prompt` keeps its single-turn rule** for single-turn columns, but a
+  multi-turn Prompt is legal and validated by a separate predicate. One validator cannot
+  serve both record families; pretending otherwise is how impossible rules leak in.
+- **Tool calls are structured fields, not inline text.** Qwen3's template serialises
+  `tool_call.arguments` with a type check to avoid double-escaping, so arguments stay a
+  JSON string on the wire and the template owns the rendering.
+- **The multi-turn split rule.** Single-turn rules ("first user turn only") do not apply.
+  The trajectory is stored whole, and `strip_to_prompt()` for trajectories trims trailing
+  assistant turns only — it never removes an interior turn, because interior turns are
+  the context.
+
+**Per-turn reasoning.** A multi-turn trajectory can carry a ` thinking` block on each
+assistant turn. Qwen3's template stores only the blocks after the latest non-tool user
+turn, silently pruning earlier ones. That pruning is the template's job and is left to
+it: reasoning is stored verbatim per turn (§5), and the render gate (§11.2) reports which
+blocks survive so the behaviour is visible rather than assumed.
+
+**Where multi-turn comes from, per column.**
+
+| Column | Source of multi-turn | Response origin |
+|---|---|---|
+| Coding & Agentic | prebuilt `ToolACE`, Hermes-FC (trajectories kept whole) | prebuilt turns kept; teacher answers the **final** assistant turn |
+| Coding & Agentic | teacher-simulated trajectories (new, §10.2) | teacher |
+| Roleplay & Conversational | prebuilt `smoltalk systemchats-30k`, `everyday-conversations`, OpenHermes roleplay | teacher answers **every** assistant turn |
+
+**Two provenance modes.** *Prebuilt-backed* trajectories keep the source's own tool
+results, because a tool result is an observation and not a response the student is
+trained to emit; the teacher re-writes the assistant turns. *Simulated* trajectories are
+generated end-to-end by the teacher acting as user, agent, and tool environment (§10.2),
+so every token is teacher-written. Simulated rows set `meta.simulated = true`, which the
+manifest reports separately, so M3 can weigh prebuilt observations against invented ones.
+
+**Shared cap and no cap inflation.** Multi-turn trajectories are counted as one example
+regardless of turn count, so the §7 caps and the 39,000-candidate budget are unchanged.
+The cost shows up as tokens, not rows, and §12 is re-costed accordingly.
+
+### 5.2 Base schema decisions
+
+Decisions that apply to both record families:
 
 - **`messages` is the wire format.** Native to TRL and Unsloth, and the only form
   either library accepts images in.
@@ -167,8 +252,10 @@ Decisions:
 The third bucket is six distinct schemas, not one. Each still gets its own module; what
 the shared layer buys is that dedup, filter, split, and report never see a source
 format. Adapters parse the full shape, but the pipeline then reduces every row to its
-prompt (`strip_to_prompt`): only the leading system turn and the first user turn are
-persisted, so every prebuilt answer is discarded centrally.
+prompt (`strip_to_prompt`): for single-turn sources only the leading system turn and the
+first user turn are persisted, so every prebuilt answer is discarded centrally. For the
+multi-turn sources named in §5.1 the trajectory is persisted whole and only trailing
+assistant turns are trimmed, so prebuilt tool results survive as context.
 
 ## 7. Sources and caps
 
@@ -201,8 +288,8 @@ used, because both derive from the InTheWild corpus (§8).
 | Source | Cap | Notes |
 |---|---:|---|
 | `m-a-p/CodeFeedback-Filtered-Instruction` | 5,000 | all langs |
-| `NousResearch/hermes-function-calling-v1` | 3,000 | `func_calling`, `func_calling_singleturn`; carries `tools` |
-| `Team-ACE/ToolACE` | 3,000 | carries `tools` |
+| `NousResearch/hermes-function-calling-v1` | 3,000 | `func_calling`, `func_calling_singleturn`; carries `tools`; multi-turn (§5.1) |
+| `Team-ACE/ToolACE` | 3,000 | carries `tools`; multi-turn (§5.1) |
 | `HuggingFaceM4/the_cauldron` `screen2words` | 1,000 | image prompts |
 | teacher (Magpie) | 1,000 | invented tool-use prompts |
 
@@ -210,9 +297,9 @@ used, because both derive from the InTheWild corpus (§8).
 
 | Source | Cap | Notes |
 |---|---:|---|
-| `teknium/OpenHermes-2.5` | 2,500 | `category == "roleplay"` |
-| `HuggingFaceTB/smoltalk` `everyday-conversations` | 1,500 | |
-| `HuggingFaceTB/smoltalk` `systemchats-30k` | 1,500 | |
+| `teknium/OpenHermes-2.5` | 2,500 | `category == "roleplay"`; multi-turn (§5.1) |
+| `HuggingFaceTB/smoltalk` `everyday-conversations` | 1,500 | multi-turn, ~7.8 turns (§5.1) |
+| `HuggingFaceTB/smoltalk` `systemchats-30k` | 1,500 | multi-turn, ~6.3 turns (§5.1) |
 | `HuggingFaceTB/smoltalk` `smol-magpie-ultra` | 1,500 | filter on `quality` / `reward_model_score` |
 | `HuggingFaceTB/smoltalk` `longalign` | 500 | long-context |
 
@@ -345,10 +432,15 @@ rather than papered over.
 1. **Fetch** — stream each source with its cap; write image bytes to the store
    immediately; record the license from the HF API into the manifest.
 2. **Normalize** — adapter parses the source; strip to the prompt (leading system + first
-   user turn); validate. Every prebuilt assistant turn is discarded here.
+   user turn), or persist the whole trajectory for the §5.1 multi-turn sources; validate.
+   Every prebuilt assistant turn is discarded here, and prebuilt tool results are kept as
+   context only.
 3. **Dedup** — exact on a normalised prompt hash; near-duplicate via MinHash on
-   prompts; image-sha collapse.
-4. **Filter (prompt-side)** — token bounds, empty prompts, language. The response-side
+   prompts; image-sha collapse. For trajectories the hash covers the prompt prefix (system
+   plus turns up to the first assistant turn), so two trajectories that differ only in
+   their teacher answers are not counted as duplicates.
+4. **Filter (prompt-side)** — token bounds, empty prompts, language; for trajectories,
+   turn-count bounds and tool-call/tool-result structural validity. The response-side
    filters — n-gram loops, balanced think tags, refusal, length — run in M2 on teacher
    completions (§10.1), never in M1.
 5. **Assign domain** — rule-based per source. Sources with mixed content (Cauldron's
@@ -387,7 +479,9 @@ bulk generation, not assumed; image prompts are teacher-answered like text ones,
 the §7.6 caveat.
 
 **Resume:** append-only JSONL keyed by a content hash of the request. Re-running is
-idempotent.
+idempotent. For trajectories the key is a hash of the whole conversation prefix sent so
+far, not of a single request, so a trajectory interrupted mid-way resumes at its next
+missing turn rather than restarting.
 
 ### 10.1 Verification before training — the distillation filter
 
@@ -398,16 +492,75 @@ checked before they can become training data:
   `verify` spec (§7.7). `verify.check_record` executes the teacher's completion against
   them; failures are dropped and counted per source.
 - **Gold answers.** Maths prompts reuse gsm8k / NuminaMath golds through `answer_match`.
+- **Trajectories.** A multi-turn row is checked at both granularities (§10.2): structural
+  validity per turn, final-answer correctness per trajectory where a spec exists. The
+  trajectory-level check runs against the last assistant turn's visible answer, with
+  `think` blocks stripped first so reasoning cannot satisfy a test by accident.
 - **Response filters.** Accepted rows still pass `filters.example_reject_reason`:
-  balanced think tags, loop, refusal, length.
+  balanced think tags, loop, refusal, length. For trajectories these run per assistant
+  turn, and a trajectory is rejected if any assistant turn fails.
 - **No oracle.** Roleplay, chat-style coding, and uncensored completions have no
   mechanical check; they pass filters and review only. This is stated residual risk and
   is sample-audited before M3.
 - **Report.** Per-source and per-domain pass rates go into the manifest — the number
-  that guides M3 caps.
+  that guides M3 caps. Trajectory pass rates are reported separately from single-turn
+  pass rates, since a trajectory passes only if every one of its turns passes.
 
 The verifier runs generated code with the local interpreter; it is a correctness check,
 not a security sandbox, so generation and verification use a disposable environment.
+
+### 10.2 Multi-turn generation
+
+Multi-turn differs from seeded generation in one way: it is a **loop with an
+environment**, not one completion. This section covers the *simulated* provenance mode of
+§5.1 — trajectories built from scratch against a tool schema. *Prebuilt-backed*
+trajectories already carry their own turns and tool results from the source, so for those
+the teacher only re-writes assistant turns, one call per turn, with the source's tool
+results spliced back in.
+
+For each simulated trajectory the teacher plays three roles — user, agent, and tool
+environment — as separate calls against the served model, which is the pattern documented
+for NVIDIA's conversational-tool-use pipeline:
+
+1. **User turn.** Seeded from an M1 multi-turn prompt (§5.1), or invented from a
+   `tools` schema when the seed is a tool set rather than a conversation.
+2. **Agent turn.** The teacher receives the conversation so far plus `tools` and emits an
+   assistant turn, with `tool_calls` when it decides to call one.
+3. **Tool turn.** The tool environment — a model call, not a real sandbox — returns a
+   result for each call. Results are simulated; this is stated in `meta.simulated`.
+4. Repeat 2–3 until the teacher emits an assistant turn with no tool call, or the
+   turn budget is hit. A capped trajectory that never reaches a final answer is dropped.
+
+**Bounds.** Agentic trajectories cap at **8 tool turns**; roleplay and chat trajectories
+cap at **8 user turns**. Both are deliberately short of the 10–30 and 100–500 ranges seen
+in production agentic data: a 4B student and a 9B local teacher are being taught
+format and procedure, not long-horizon planning, and local generation cost scales with
+turns. A trajectory over budget is truncated at the last completed assistant turn, and
+kept only if that turn is answer-bearing.
+
+**Reasoning per turn.** Each agent turn runs with `enable_thinking: true`, so a
+trajectory carries one `think` block per assistant turn. Stored verbatim per turn;
+Qwen3's template prunes all but the latest user-delimited segment at render time, which
+§11.2 reports.
+
+**Rejection at trajectory and turn granularity.** Both are checked, matching current
+practice:
+
+- **Turn level** — rule-based: every `tool_calls` id resolves to a following `tool`
+  message, arguments parse as JSON against the declared schema, no call to an undeclared
+  tool, no empty or error-laden turn.
+- **Trajectory level** — the final assistant turn is checked against the prompt's
+  `verify` spec where one exists (§10.1), and a model judge scores action coherence
+  where none does. A failed trajectory is dropped whole; failed turns are not repaired,
+  because a repaired middle turn makes the tail conditional on data the student will
+  never see.
+
+**Difficulty filter.** Where a prompt is rolled out more than once, all-pass and
+all-fail trajectories are dropped, keeping only tasks where the teacher sometimes
+succeeds — the standard rejection-sampling difficulty filter.
+
+**No oracle for roleplay.** Roleplay trajectories have no mechanical check and are
+judge-scored plus sample-audited, the same residual risk §10.1 already states.
 
 ## 11. Verification
 
@@ -417,9 +570,17 @@ Ordered by the cost of skipping.
    in §8. Non-negotiable.
 2. **Template render** — apply the project's Qwen3.5 Jinja template to a sample. This
    settles the tag spelling, and asserts no errors, that the think-block survives, and
-   that the generation prompt opens a `<think>` block.
+   that the generation prompt opens a `<think>` block. For multi-turn samples it
+   additionally reports **which per-turn `think` blocks survive rendering** (Qwen3 keeps
+   only the latest user-delimited segment), **which spans carry the generation mask** —
+   assistant turns only, with `tool` results outside it — and that `tool_calls` and
+   `tool_call_id` round-trip without double-escaping. A multi-turn record whose tokens
+   land inside a generation span when they should not is the failure this gate exists
+   to catch.
 3. **Schema validator** — 100% of records; every image sha resolves to a file; prompt
-   records end in a user turn and carry no prebuilt assistant turn.
+   records end in a user turn and carry no prebuilt assistant turn; trajectory records
+   end in an assistant turn, every `tool` message resolves to a preceding call, and no
+   interior turn was stripped.
 4. **Unit-test verifier** — positive and negative controls on `verify.py` before M2
    scales: known-good code passes, known-bad fails.
 5. **Distribution report** — domain, token, and image counts against §4 and §7.6,
@@ -435,7 +596,7 @@ Ordered by the cost of skipping.
 | | Where | What | Size |
 |---|---|---|---|
 | **M1** | local, no teacher | prompt pipeline over the prebuilt sources; unit-test seeds + verifier | 3,000 prompt train / 200 val prompts, ~0.35 GB |
-| **M2** | local, teacher | teacher generation and verification over all four columns | ~500 teacher-written examples, pass rates recorded |
+| **M2** | local, teacher | teacher generation and verification over all four columns, single-turn and multi-turn (§10.2) | ~500 teacher-written examples, pass rates recorded |
 | **M3** | Colab L4 | vLLM at batch scale; merge; emit final | 25,000 train / 1,000 val, ~2.7 GB |
 
 **M1 emits prompts, not examples.** Because every response is teacher-written (§10), all
@@ -455,6 +616,15 @@ should be re-anchored on M2's measured throughput and pass rates. The 2.7 GB art
 must be written to Drive or the HF Hub, because Colab disk is ephemeral and Phase 2A
 reads it in a later session.
 
+**Multi-turn cost.** A trajectory is N teacher calls rather than one, and the same
+context is re-sent per turn, so a two-turn trajectory costs roughly 3–4 single-turn
+calls in prefill terms and more in output. The two affected columns are capped at 6,000
+Coding and 7,500 Roleplay candidates against 13,000 and 7,500 (§7.2–7.3), and only a
+subset of each is multi-turn, so this is a fraction of the corpus rather than the bulk.
+The estimate above still holds at the ~30% level; the number to re-anchor is M2's
+measured per-turn latency. If multi-turn turns out to dominate the budget, the lever is
+the 8-turn bound in §10.2, not the example caps.
+
 ## 13. Sizing rationale
 
 25,000 is a practical target, not a scaling-law optimum. The relevant results:
@@ -472,6 +642,11 @@ reads it in a later session.
   high-quality set over more epochs beats adding unique samples.
 - *Revisiting the Superficial Alignment Hypothesis* (arXiv:2410.03717) — style and
   formatting saturate in roughly 100 examples; task knowledge does not.
+- **Multi-turn SFT** — the 2026 multi-turn survey (arXiv:2504.04717) finds SFT remains the
+  most widely used multi-turn improvement and that conversational state preservation is an
+  open problem; practitioner guidance (Fireworks, *Best Practices for Multi-Turn RL*) is
+  that SFT buys reasonable behaviour and RL buys robustness. That sets the multi-turn
+  ceiling claimed here, and is why §14 carries it as accepted residual risk.
 
 Phase 1 consequences: pull 39,000 prompt candidates, generate against the mix, then
 verify and filter down to 25,000 rather than capping at 25,000, and treat size as an
@@ -491,7 +666,11 @@ ablation against §8.
 | Transient disk on Colab | multi-GB Cauldron shards; streaming plus caps, avoid the §7.6 exclusions |
 | Colab persistence | final artefact must leave the runtime; §12 |
 | Indirect GSM8K contamination | accepted, recorded in the manifest; §8 |
-| `tools` through the Qwen3.5 template | whether tool-call formatting survives the student's template is unverified; Phase 2A risk |
+| `tools` through the Qwen3.5 template | whether tool-call formatting survives the student's template is unverified; Phase 2A risk. The §11.2 gate reports generation-span placement and `tool_calls` round-tripping on multi-turn samples |
+| Multi-turn without an RL stage | SFT on teacher trajectories teaches the shape of tool use and the first-turn chat behaviour, but the literature is explicit that multi-turn robustness comes from a later RL/DPO stage. No RL stage is planned, so multi-turn quality is accepted at the "reasonable behaviour" tier; the affected columns are Coding/Agentic tool use and Roleplay/chat |
+| Simulated tool results | the tool environment is a model call, not a sandbox (§10.2), so results can be wrong or reward-hackable. Turn-level structural checks catch malformed calls, not wrong ones — `meta.simulated` is recorded so M3 can ablate |
+| Per-turn reasoning pruning | Qwen3's template keeps only the latest user-delimited `think` block; earlier blocks are silently dropped at render time. Stored verbatim per §5, but what the student actually sees is settled by §11.2, not by the record |
+| Judge-only verification for roleplay | roleplay trajectories have no oracle and are judge-scored plus sample-audited; multi-turn conversational state preservation is an acknowledged open problem in the literature, not a solved one |
 | Gated datasets | avoided by design; no source needs a token or terms acceptance |
 | Eval on a held-out slice of a training corpus | in-distribution by construction; the limitation is stated in §8 |
 | Distillation inherits teacher bugs | coding is unit-tested and maths has golds (§10.1); roleplay, chat coding, and uncensored have no oracle and are sample-audited before M3 |
@@ -514,4 +693,11 @@ body; entries here are pointers, not a second source of truth.
 | ~~Teacher roleplay share set to zero~~ (rescinded 2026-09-29) | superseded: the teacher writes every response, roleplay included |
 | Think tags stored verbatim | the student mimics the teacher's reasoning process because the tags are data (§5, §10) |
 | Unit-test seeds as the distillation filter | the student would otherwise inherit the teacher's failed attempts (§7.7, §10.1) |
+| Multi-turn trajectories for tool/agentic and roleplay/chat | flattening to a first user turn teaches emitting a tool call but never reading its result; roleplay consistency is a property of the conversation (§5.1) |
+| `tool` added to ROLES; trajectories end on an assistant turn | OpenAI function-calling shape renders through the Qwen3.5 template; a trailing tool result is not a trainable response (§5.1) |
+| Trajectories stored whole, trailing assistant turns only trimmed | interior turns are the context; first-user-turn stripping would destroy the trajectory (§5.1) |
+| Tool results kept as observations, assistant turns teacher-written | a result is context, not a response the student emits; `meta.simulated` distinguishes simulated from prebuilt (§5.1, §10.2) |
+| Trajectory rejection is whole-trajectory, never turn repair | a repaired middle turn makes the tail conditional on data the student never sees (§10.2) |
+| 8-turn bound on both trajectory families | a 4B student learns format and procedure, not long-horizon planning; local generation cost scales with turns (§10.2) |
+| RL gap accepted, not closed | multi-turn robustness needs a later RL/DPO stage; recorded as residual risk rather than adding an M4 (§14) |
 | 39,000 prompt candidates filtered to 25,000 | quality outweighs quantity, and size becomes measurable |
