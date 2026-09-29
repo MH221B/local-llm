@@ -1,0 +1,37 @@
+##### ub512_b4096 #####
+load_backend: loaded RPC backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-rpc.dll
+ggml_vulkan: Found 1 Vulkan devices:
+ggml_vulkan: 0 = AMD Radeon(TM) 890M Graphics (AMD proprietary driver) | uma: 1 | fp16: 1 | bf16: 1 | fp4: 0 | warp size: 64 | shared memory: 32768 | int dot: 1 | matrix cores: KHR_coopmat
+load_backend: loaded Vulkan backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-vulkan.dll
+load_backend: loaded CPU backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-cpu-zen4.dll
+| model                          |       size |     params | backend    | ngl | n_batch |  fa |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | ------: | --: | --------------: | -------------------: |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |    4096 |   1 |          pp4096 |       595.95 ┬▒ 46.07 |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |    4096 |   1 |         pp16384 |       542.60 ┬▒ 11.66 |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |    4096 |   1 |           tg128 |         31.56 ┬▒ 0.04 |
+
+build: 4364bf723 (11228)
+##### ub512_b8192 #####
+load_backend: loaded RPC backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-rpc.dll
+ggml_vulkan: Found 1 Vulkan devices:
+ggml_vulkan: 0 = AMD Radeon(TM) 890M Graphics (AMD proprietary driver) | uma: 1 | fp16: 1 | bf16: 1 | fp4: 0 | warp size: 64 | shared memory: 32768 | int dot: 1 | matrix cores: KHR_coopmat
+load_backend: loaded Vulkan backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-vulkan.dll
+load_backend: loaded CPU backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-cpu-zen4.dll
+| model                          |       size |     params | backend    | ngl | n_batch |  fa |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | ------: | --: | --------------: | -------------------: |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |    8192 |   1 |          pp4096 |        649.99 ┬▒ 7.35 |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |    8192 |   1 |         pp16384 |       544.60 ┬▒ 15.58 |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |    8192 |   1 |           tg128 |         31.11 ┬▒ 0.03 |
+
+build: 4364bf723 (11228)
+
+===== SUMMARY =====
+| Config      | n_batch | n_ubatch | pp4096          | pp16384         | tg128         |
+| ----------- | ------: | -------: | --------------: | --------------: | ------------: |
+| ub512_b4096 |    4096 |      512 | 595.95 +/-46.07 | 542.60 +/-11.66 | 31.56 +/-0.04 |
+| ub512_b8192 |    8192 |      512 | 649.99 +/- 7.35 | 544.60 +/-15.58 | 31.11 +/-0.03 |
+
+Baseline for comparison (ub512_b2048): pp4096 658.87, pp16384 532.81, tg128 28.44
+
+At -ub 512, raising -b leaves prefill within noise (pp16384 +2%). tg128 is consistently
+~+10% for -b > 2048 across all runs in both sweeps. See results.md.

@@ -1,0 +1,15 @@
+# Model weights (too large for git; re-download from HF)
+models/
+
+# llama.cpp runtime binaries (re-download from ggml releases)
+llama-cpp/
+
+# Pipeline outputs (rebuildable via tools/dataset)
+datasets/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Local secrets
+.env

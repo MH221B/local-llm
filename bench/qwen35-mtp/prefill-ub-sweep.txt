@@ -1,0 +1,84 @@
+##### ub512_b2048  (baseline) #####
+load_backend: loaded RPC backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-rpc.dll
+ggml_vulkan: Found 1 Vulkan devices:
+ggml_vulkan: 0 = AMD Radeon(TM) 890M Graphics (AMD proprietary driver) | uma: 1 | fp16: 1 | bf16: 1 | fp4: 0 | warp size: 64 | shared memory: 32768 | int dot: 1 | matrix cores: KHR_coopmat
+load_backend: loaded Vulkan backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-vulkan.dll
+load_backend: loaded CPU backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-cpu-zen4.dll
+| model                          |       size |     params | backend    | ngl |  fa |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | --: | --------------: | -------------------: |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |   1 |          pp4096 |        658.87 ┬▒ 1.82 |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |   1 |         pp16384 |       532.81 ┬▒ 17.02 |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |   1 |           tg128 |         28.44 ┬▒ 0.03 |
+
+build: 4364bf723 (11228)
+##### ub1024_b2048 #####
+load_backend: loaded RPC backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-rpc.dll
+ggml_vulkan: Found 1 Vulkan devices:
+ggml_vulkan: 0 = AMD Radeon(TM) 890M Graphics (AMD proprietary driver) | uma: 1 | fp16: 1 | bf16: 1 | fp4: 0 | warp size: 64 | shared memory: 32768 | int dot: 1 | matrix cores: KHR_coopmat
+load_backend: loaded Vulkan backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-vulkan.dll
+load_backend: loaded CPU backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-cpu-zen4.dll
+| model                          |       size |     params | backend    | ngl | n_ubatch |  fa |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | -------: | --: | --------------: | -------------------: |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |     1024 |   1 |          pp4096 |        646.41 ┬▒ 2.24 |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |     1024 |   1 |         pp16384 |       522.45 ┬▒ 20.48 |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |     1024 |   1 |           tg128 |         28.24 ┬▒ 0.11 |
+
+build: 4364bf723 (11228)
+##### ub2048_b2048 #####
+load_backend: loaded RPC backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-rpc.dll
+ggml_vulkan: Found 1 Vulkan devices:
+ggml_vulkan: 0 = AMD Radeon(TM) 890M Graphics (AMD proprietary driver) | uma: 1 | fp16: 1 | bf16: 1 | fp4: 0 | warp size: 64 | shared memory: 32768 | int dot: 1 | matrix cores: KHR_coopmat
+load_backend: loaded Vulkan backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-vulkan.dll
+load_backend: loaded CPU backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-cpu-zen4.dll
+| model                          |       size |     params | backend    | ngl | n_ubatch |  fa |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | -------: | --: | --------------: | -------------------: |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |     2048 |   1 |          pp4096 |        584.91 ┬▒ 0.57 |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |     2048 |   1 |         pp16384 |        503.90 ┬▒ 1.57 |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |     2048 |   1 |           tg128 |         28.16 ┬▒ 0.13 |
+
+build: 4364bf723 (11228)
+##### ub1024_b4096 #####
+load_backend: loaded RPC backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-rpc.dll
+ggml_vulkan: Found 1 Vulkan devices:
+ggml_vulkan: 0 = AMD Radeon(TM) 890M Graphics (AMD proprietary driver) | uma: 1 | fp16: 1 | bf16: 1 | fp4: 0 | warp size: 64 | shared memory: 32768 | int dot: 1 | matrix cores: KHR_coopmat
+load_backend: loaded Vulkan backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-vulkan.dll
+load_backend: loaded CPU backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-cpu-zen4.dll
+| model                          |       size |     params | backend    | ngl | n_batch | n_ubatch |  fa |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | ------: | -------: | --: | --------------: | -------------------: |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |    4096 |     1024 |   1 |          pp4096 |        595.38 ┬▒ 1.37 |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |    4096 |     1024 |   1 |         pp16384 |       517.42 ┬▒ 15.63 |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |    4096 |     1024 |   1 |           tg128 |         30.86 ┬▒ 0.25 |
+
+build: 4364bf723 (11228)
+##### ub2048_b8192 #####
+load_backend: loaded RPC backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-rpc.dll
+ggml_vulkan: Found 1 Vulkan devices:
+ggml_vulkan: 0 = AMD Radeon(TM) 890M Graphics (AMD proprietary driver) | uma: 1 | fp16: 1 | bf16: 1 | fp4: 0 | warp size: 64 | shared memory: 32768 | int dot: 1 | matrix cores: KHR_coopmat
+load_backend: loaded Vulkan backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-vulkan.dll
+load_backend: loaded CPU backend from C:\Users\tnmh\projects\local-llm\llama-cpp\ggml-cpu-zen4.dll
+| model                          |       size |     params | backend    | ngl | n_batch | n_ubatch |  fa |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | ------: | -------: | --: | --------------: | -------------------: |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |    8192 |     2048 |   1 |          pp4096 |        630.29 ┬▒ 6.01 |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |    8192 |     2048 |   1 |         pp16384 |        526.12 ┬▒ 5.79 |
+| qwen35 4B Q4_K - Small         |   2.44 GiB |     4.33 B | Vulkan     |  99 |    8192 |     2048 |   1 |           tg128 |         30.46 ┬▒ 0.19 |
+
+build: 4364bf723 (11228)
+===== SUMMARY (parsed) =====
+Model: qwen35 4B Q4_K - Small | Vulkan | ngl 99 | fa 1 | KV f16 | build 11228
+Command: llama-bench -p 4096,16384 -r 3
+
+| Config             | n_batch | n_ubatch | pp4096          | pp16384         | tg128         |
+| ------------------ | ------: | -------: | --------------: | --------------: | ------------: |
+| ub512_b2048 (base) |    2048 |      512 | 658.87 +/- 1.82 | 532.81 +/-17.02 | 28.44 +/-0.03 |
+| ub1024_b2048       |    2048 |     1024 | 646.41 +/- 2.24 | 522.45 +/-20.48 | 28.24 +/-0.11 |
+| ub2048_b2048       |    2048 |     2048 | 584.91 +/- 0.57 | 503.90 +/- 1.57 | 28.16 +/-0.13 |
+| ub1024_b4096       |    4096 |     1024 | 595.38 +/- 1.37 | 517.42 +/-15.63 | 30.86 +/-0.25 |
+| ub2048_b8192       |    8192 |     2048 | 630.29 +/- 6.01 | 526.12 +/- 5.79 | 30.46 +/-0.19 |
+
+Conclusion: default -ub 512 is the fastest. Increasing -ub monotonically reduces
+prefill throughput (-11% at ub2048). Hypothesis (larger ubatch -> better CU
+utilisation) is refuted on Vulkan/coopmat; the shader already saturates at 512.
+Keep defaults: -b 2048 -ub 512.
+
+
+
