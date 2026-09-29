@@ -1046,7 +1046,7 @@ The `tools` column is the reason the canonical schema has a `tools` field at all
 (spec §5). It must survive, on the prompt record, to the JSONL unchanged, so the teacher
 generates tool calls against the real schema.
 
-- [ ] **Step 1: Write `tools/dataset/adapters/toolcalls.py`**
+- [x] **Step 1: Write `tools/dataset/adapters/toolcalls.py`**
 
 ```python
 """NousResearch/hermes-function-calling-v1. Carries a `tools` schema per example."""
@@ -1056,6 +1056,17 @@ import json
 
 from ..canonical import Example
 from .base import Ctx, sharegpt_turns
+
+
+def _valid_tool_schema(tools: list) -> bool:
+    """A tool list must hold OpenAI-style function objects; anything else breaks rendering."""
+    for entry in tools:
+        if not isinstance(entry, dict):
+            return False
+        fn = entry.get("function")
+        if not isinstance(fn, dict) or not isinstance(fn.get("name"), str) or not fn["name"]:
+            return False
+    return True
 
 
 def build(row: dict, index: int, ctx: Ctx) -> Example | None:
@@ -1072,8 +1083,9 @@ def build(row: dict, index: int, ctx: Ctx) -> Example | None:
                 tools = json.loads(tools)
             except json.JSONDecodeError:
                 return None
-    if tools is not None and not isinstance(tools, list):
-        return None
+    if tools is not None:
+        if not isinstance(tools, list) or not _valid_tool_schema(tools):
+            return None
     return Example(
         id=f"hermesfc-{index}",
         domain=ctx.domain,
@@ -1103,7 +1115,7 @@ Run (from the repo root):
 ```
 Expected: `hermesfc-11 tools: 1 meta: {'category': 'weather', 'task': 'tool_call'}` then `None`.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```powershell
 git add tools/dataset/adapters/toolcalls.py
