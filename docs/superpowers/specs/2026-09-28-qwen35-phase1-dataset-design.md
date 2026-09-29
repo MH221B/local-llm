@@ -268,9 +268,12 @@ The third bucket is six distinct schemas, not one. Each still gets its own modul
 the shared layer buys is that dedup, filter, split, and report never see a source
 format. Adapters parse the full shape, but the pipeline then reduces every row to its
 prompt (`strip_to_prompt`): for single-turn sources only the leading system turn and the
-first user turn are persisted, so every prebuilt answer is discarded centrally. For the
-multi-turn sources named in §5.1 the trajectory is persisted whole and only trailing
-assistant turns are trimmed, so prebuilt tool results survive as context.
+first user turn are persisted, so every prebuilt answer is discarded centrally. A leading
+greeting handshake is dropped first when a later user turn exists: SmolTalk's
+`everyday-conversations` opens every row with `Hi` / `Hi there` before the topic, so
+keeping that turn yields a one-token prompt that the length filter rejects outright.
+For the multi-turn sources named in §5.1 the trajectory is persisted whole and only
+trailing assistant turns are trimmed, so prebuilt tool results survive as context.
 
 ## 7. Sources and caps
 

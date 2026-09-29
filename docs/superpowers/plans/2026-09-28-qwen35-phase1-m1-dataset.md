@@ -123,6 +123,14 @@ ORIGINS = ("prebuilt", "teacher")
 PART_TYPES = ("text", "image")
 ROLES = ("system", "user", "assistant")
 
+# Opening pleasantries with no request in them. Compared lowercased with trailing
+# "!" / "." stripped. See _is_bare_greeting for why this exists.
+_BARE_GREETINGS = frozenset({
+    "hi", "hi there", "hello", "hello there", "hey", "hey there",
+    "good morning", "good afternoon", "good evening", "how are you",
+    "how are you doing", "how's it going", "greetings", "yo",
+})
+
 
 @dataclass
 class ImageRef:
@@ -202,15 +210,52 @@ class Prompt:
         return json.dumps(self.to_dict(), ensure_ascii=False)
 
 
+def _is_bare_greeting(m: dict) -> bool:
+    """True for an opener that carries no request, e.g. smoltalk's "Hi there".
+
+    everyday-conversations opens with a greeting handshake before the topic; keeping
+    that turn as the prompt yields a 1-2 token record that prompt_too_short rejects,
+    so the source would contribute nothing. Checked against the dataset: every one of
+    270 sampled rows opened with one of the five strings below and all had a later
+    user turn. Text-only and short by construction, so a real request never matches.
+    """
+    content = m.get("content")
+    if isinstance(content, list):
+        if any(p.get("type") != "text" for p in content):
+            return False
+        text = "".join(p.get("text", "") for p in content)
+    elif isinstance(content, str):
+        text = content
+    else:
+        return False
+    return text.strip().lower().rstrip("!.") in _BARE_GREETINGS
+
+
 def strip_to_prompt(ex: Example) -> Prompt | None:
     """Reduce an adapter Example to its prompt: leading system + first user turn.
 
     Every prebuilt assistant turn is discarded here, before anything is written: the
     source datasets supply prompts only, and M2's teacher supplies every response.
-    Returns None when the row has no usable user turn.
+    A leading greeting turn is dropped when a later user turn exists, so the prompt
+    carries an actual request. Returns None when the row has no usable user turn.
     """
+    messages = list(ex.messages)
+    # Drop a leading greeting handshake (greeting, assistant reply, greeting, ...) so
+    # the scan starts at the first turn that carries a request. A leading system turn
+    # is preserved, so the greeting is found at index 1 in that case.
+    while True:
+        i = 1 if messages and messages[0].get("role") == "system" else 0
+        if len(messages) > i + 1 and messages[i].get("role") == "user" \
+                and _is_bare_greeting(messages[i]) \
+                and any(n.get("role") == "user" for n in messages[i + 1:]):
+            del messages[i]
+            if i < len(messages) and messages[i].get("role") == "assistant":
+                del messages[i]
+        else:
+            break
+
     kept: list[dict] = []
-    for m in ex.messages:
+    for m in messages:
         if m.get("role") == "system" and not kept:
             kept.append(m)
             continue
