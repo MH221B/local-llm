@@ -649,7 +649,7 @@ git commit -m "feat(dataset): hashing, minhash, loop detection, token counting"
 - Create: `tools/dataset/adapters/__init__.py`
 - Create: `tools/dataset/adapters/base.py`
 
-- [ ] **Step 1: Write `tools/dataset/adapters/base.py`**
+- [x] **Step 1: Write `tools/dataset/adapters/base.py`**
 
 ```python
 """Adapter protocol and helpers shared by every source module."""
@@ -740,7 +740,7 @@ Adapters parse the full source shape — some formats need the prebuilt answer f
 validation — but the pipeline immediately reduces every row to its prompt with
 `canonical.strip_to_prompt()`. No prebuilt assistant text is ever written to any artifact.
 
-- [ ] **Step 2: Write `tools/dataset/adapters/__init__.py`**
+- [x] **Step 2: Write `tools/dataset/adapters/__init__.py`**
 
 ```python
 """Adapter registry. Keys match the adapter column in sources.py."""
@@ -770,7 +770,7 @@ def get(key: str) -> Adapter:
 The package will not import until Tasks 5–9 land. That is expected; Task 5 completes it
 enough to smoke-test one path.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```powershell
 git add tools/dataset/adapters/
