@@ -2056,7 +2056,7 @@ git commit -m "feat(dataset): stratified image-disjoint split and manifest"
 **Files:**
 - Create: `tools/dataset/pipeline.py`
 
-- [ ] **Step 1: Write `tools/dataset/pipeline.py`**
+- [x] **Step 1: Write `tools/dataset/pipeline.py`**
 
 ```python
 """M1 pipeline: fetch -> normalise -> strip to prompt -> dedup -> filter -> split -> report."""
@@ -2237,7 +2237,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-- [ ] **Step 2: Dry run — no network, checks allocation only**
+- [x] **Step 2: Dry run — no network, checks allocation only**
 
 Run (from the repo root):
 ```powershell
@@ -2246,7 +2246,7 @@ Run (from the repo root):
 Expected: one `[dry]` line per source in `sources.SOURCES` (16 lines), each with a
 non-zero quota, plus one `[dry] seeds:uncensored` line, and no exception.
 
-- [ ] **Step 3: Small live run — 200 rows, exercises real streaming end to end**
+- [x] **Step 3: Small live run — 200 rows, exercises real streaming end to end**
 
 Run (from the repo root):
 ```powershell
@@ -2266,7 +2266,7 @@ Expected: `drops` shows only legitimate reasons, `train.by_domain` covers all fo
 domains including `uncensored` (from seeds), and the `sources` entries carry `license`
 and `revision`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add tools/dataset/pipeline.py
