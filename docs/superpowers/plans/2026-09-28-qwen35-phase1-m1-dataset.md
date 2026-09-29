@@ -391,7 +391,7 @@ git commit -m "feat(dataset): canonical example schema and validator"
 **Files:**
 - Create: `tools/dataset/imgstore.py`
 
-- [ ] **Step 1: Write `tools/dataset/imgstore.py`**
+- [x] **Step 1: Write `tools/dataset/imgstore.py`**
 
 ```python
 """Content-addressed image store, plus the one step that moves raw bytes into it."""
@@ -518,7 +518,7 @@ Run (from the repo root):
 ```
 Expected: `refs: 64 x 48 files: 1 valid: []` — one file on disk despite two identical stores.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```powershell
 git add tools/dataset/imgstore.py
