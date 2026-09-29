@@ -7,6 +7,9 @@ llama-cpp/
 # Pipeline outputs (rebuildable via tools/dataset)
 datasets/
 
+# Local explanation artifacts for the user
+explanation/
+
 # Python
 __pycache__/
 *.py[cod]

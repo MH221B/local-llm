@@ -532,7 +532,7 @@ git commit -m "feat(dataset): content-addressed image store"
 **Files:**
 - Create: `tools/dataset/textutil.py`
 
-- [ ] **Step 1: Write `tools/dataset/textutil.py`**
+- [x] **Step 1: Write `tools/dataset/textutil.py`**
 
 ```python
 """Normalising, hashing, near-duplicate signatures, loop detection, token counting."""
@@ -619,7 +619,7 @@ def repeating_ngram_ratio(text: str, n: int = 8) -> float:
 
 if __name__ == "__main__":
     a = "The quick brown fox jumps over the lazy dog, again and again."
-    b = "the QUICK brown fox   jumps over the lazy dog again and again"
+    b = "the QUICK brown fox jumps   over the lazy dog, again and again."
     c = "Completely unrelated content about marine biology and tides."
     print("hash_equal:", prompt_hash(a) == prompt_hash(b))
     print("near_ab:", round(jaccard_est(minhash(a), minhash(b)), 3))
@@ -632,9 +632,9 @@ Run (from the repo root):
 ```powershell
 & "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.textutil
 ```
-Expected: `hash_equal: True`, `near_ab` above 0.5, `near_ac` well below it, `loop_ratio` above 0.05, and a non-zero estimated token count.
+Expected: `hash_equal: True` (the two strings differ only in case and whitespace, which is what `normalise` collapses), `near_ab` above 0.5, `near_ac` well below it, `loop_ratio` above 0.05 and at most 1.0, and a non-zero estimated token count.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```powershell
 git add tools/dataset/textutil.py
