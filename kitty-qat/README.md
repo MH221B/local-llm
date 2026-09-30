@@ -14,7 +14,7 @@ Spec: `../docs/superpowers/specs/2026-09-30-kitty-qat-port-design.md`
 
 | Check | Status |
 |---|---|
-| 1. Cache-level golden trace | not started |
-| 2. Structural (layer map, head dims) | not started |
-| 3. Quantization exercised | not started |
-| 4. Baseline FP16 / INT2 / Kitty-Pro | not started |
+| 1. Cache-level golden trace | PASS (prefill=200, decode=300, every-step tensor equality with the reference cache) |
+| 2. Structural (layer map, head dims) | PASS ([3,7,11,15,19,23,27,31], head_dim 256, 4 KV heads) |
+| 3. Quantization exercised | PASS (quantized region differs from fp16; 160-token boundary quantizes nothing) |
+| 4. Baseline FP16 / INT2 / Kitty-Pro | 3/3 = 3/3 = 3/3 (local CPU, thinking off, cached ~253 tokens; byte-identical outputs — see `bench/port-results.md`) |
