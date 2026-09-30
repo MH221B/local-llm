@@ -26,6 +26,24 @@ class TeacherError(RuntimeError):
     pass
 
 
+def _fold_reasoning(message: dict) -> dict:
+    """Fold a server-split `reasoning_content` back into `content` as a `<think>` block.
+
+    llama-server's default `--reasoning-format auto` extracts the model's thoughts into a
+    separate `message.reasoning_content` field and leaves `content` as the answer only.
+    The canonical schema (spec section 5.2) stores reasoning verbatim *inside* `content`
+    as `<think>...</think>`, and the response filters, the render gate, and both chat
+    templates all expect it there — `student.jinja` reads `reasoning_content` only as a
+    fallback. Fold it back at this single transport boundary so no caller can drop it.
+    """
+    reasoning = message.get("reasoning_content")
+    content = message.get("content") or ""
+    if isinstance(reasoning, str) and reasoning.strip() and "<think>" not in content:
+        message = {**message,
+                   "content": f"<think>\n{reasoning.strip()}\n</think>\n\n{content}".rstrip()}
+    return message
+
+
 def to_wire_messages(messages: list[dict], store=None) -> list[dict]:
     """Canonical messages -> OpenAI chat messages, resolving image shas to data URIs."""
     out: list[dict] = []
@@ -118,7 +136,7 @@ class TeacherClient:
         if seed is not None:
             payload["seed"] = seed
         reply = self._post_retry("/v1/chat/completions", payload)
-        return reply["choices"][0]["message"]
+        return _fold_reasoning(reply["choices"][0]["message"])
 
 
 if __name__ == "__main__":

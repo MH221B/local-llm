@@ -385,7 +385,9 @@ if __name__ == "__main__":
     print("image reply:", repr((msg.get("content") or "").strip())[:60])
 ```
 
-- [x] **Step 2: Launch the teacher server**
+- [x] > **Reasoning-trace capture (found while running Task 15).** llama-server's default `--reasoning-format auto` extracts the model's thoughts into a separate `message.reasoning_content` field and leaves `content` as the answer only. The canonical schema (spec §5.2) and both chat templates expect the reasoning *inside* `content` as `<think>…</think>`, so `TeacherClient.complete` folds `reasoning_content` back into `content` via `_fold_reasoning` at that single boundary. Without it, every generated row silently lost its trace (measured: 0 of 24 accepted rows carried a `<think>` block). Server-side alternative: launch with `--reasoning-format deepseek-legacy`, which keeps the tags in `content`; the client-side fold is kept so capture does not depend on the launch flag. The cache was pruned and the seeded phase re-run after the fix.
+
+**Step 2: Launch the teacher server**
 
 Teacher GGUF and projector are already on disk (PIPELINE.md Phase 1). Port 8086 is distinct from the student's 8085. The M2 driver is sequential, so a single slot is enough; `-c 32768` keeps long multi-turn prefixes (which resend images) inside one slot's context.
 
