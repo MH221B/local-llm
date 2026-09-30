@@ -2802,7 +2802,7 @@ emits the holdout; the before/after measurement is Phase 2A's §11.6.
 
 Depends on Tasks 1–2 and 9.
 
-- [ ] **Step 1: Write `tools/dataset/visionholdout.py`**
+- [x] **Step 1: Write `tools/dataset/visionholdout.py`**
 
 ```python
 """Emit the section 8 vision holdout: held-out Cauldron VQA, never trained on."""
@@ -2877,7 +2877,7 @@ config, so in practice no sharing occurs. The manifest's image totals report the
 *training* pool only, which is why Task 16 Step 6 reads them rather than a raw
 `du -sh` of the store.
 
-- [ ] **Step 2: Dry run, then the real export**
+- [x] **Step 2: Dry run, then the real export**
 
 ```powershell
 & "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.visionholdout --dry-run
@@ -2886,7 +2886,7 @@ config, so in practice no sharing occurs. The manifest's image totals report the
 Expected: four `[dry]` lines naming `chartqa`, `ai2d`, `tqa`, `scienceqa`; then four
 `<config> -> 125` lines and `vision holdout: 500 rows`.
 
-- [ ] **Step 3: Confirm it is disjoint from training**
+- [x] **Step 3: Confirm it is disjoint from training**
 
 ```powershell
 & "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.contaminate --dataset datasets/qwen35-4b-sft/eval/vision.jsonl --skip HuggingFaceM4/the_cauldron
@@ -2896,7 +2896,7 @@ Expected: `collisions: 0`. The VQA configs are excluded by construction from
 keeps the guard from comparing the holdout with its own source configs (which would
 always collide).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add tools/dataset/visionholdout.py
