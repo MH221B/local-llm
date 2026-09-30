@@ -23,8 +23,15 @@ def strip_think(text: str) -> str:
 
 
 def extract_code(completion: str) -> str:
-    blocks = _CODE_FENCE.findall(completion)
-    return (blocks[-1] if blocks else strip_think(completion)).strip()
+    """Every fenced block, joined.
+
+    A coding answer usually ends with a usage example in its own fence, so taking the
+    last block alone executes the demo without the definition. Measured: three MBPP seeds
+    failed `NameError: name 'tuple_intersection' is not defined` - names that appear only
+    in the final block.
+    """
+    blocks = [b.strip() for b in _CODE_FENCE.findall(completion)]
+    return "\n\n".join(blocks) if blocks else strip_think(completion).strip()
 
 
 def run_python(source: str, stdin: str = "", timeout: float = 10.0) -> tuple[bool, str]:
@@ -48,7 +55,10 @@ def check_python_tests(completion: str, tests: list[str], setup: str = "",
 
 def check_python_io(completion: str, pairs: list[list[str]],
                     timeout: float = 10.0) -> tuple[bool, str]:
-    code = extract_code(completion)
+    # Stdout is compared exactly, so a trailing usage example would pollute it: the last
+    # block only here, unlike `extract_code`, which joins them all.
+    blocks = [b.strip() for b in _CODE_FENCE.findall(completion)]
+    code = blocks[-1] if blocks else strip_think(completion).strip()
     for stdin, expected in pairs[:20]:
         ok, info = run_python(code, stdin=stdin, timeout=timeout)
         if not ok:

@@ -81,7 +81,7 @@ def to_wire_messages(messages: list[dict], store=None) -> list[dict]:
 
 class TeacherClient:
     def __init__(self, base_url: str = "http://127.0.0.1:8086",
-                 model: str = "local-teacher", timeout: int = 900,
+                 model: str = "local-teacher", timeout: int = 1800,
                  retries: int = 3, backoff: float = 5.0):
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -108,6 +108,12 @@ class TeacherClient:
             except (urllib.error.URLError, TimeoutError, ConnectionError,
                     json.JSONDecodeError) as exc:
                 last = exc
+                # A timeout means the teacher is still generating. Retrying replays the
+                # same deterministic request and burns the same wall-clock again
+                # (measured: 3 x 900s = 45 min lost to one uncapped coding row), so a
+                # timeout is terminal. Retries stay for connection-level failures.
+                if isinstance(exc, TimeoutError):
+                    break
                 if attempt < self.retries:
                     time.sleep(self.backoff * attempt)
         raise TeacherError(f"{path} failed after {self.retries} attempts: {last}")
