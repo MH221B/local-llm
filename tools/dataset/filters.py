@@ -6,6 +6,7 @@ record is dropped.
 """
 from __future__ import annotations
 
+import json
 import re
 
 from .canonical import Example
@@ -68,16 +69,19 @@ def prompt_reject_reason(text: str, tokens: int) -> str | None:
     return None
 
 
-def example_reject_reason(ex: Example) -> str | None:
-    """Response-side predicates. M2 runs these on teacher completions before writing."""
-    text = assistant_text(ex)
+MIN_TURN_TOKENS = 4
+
+
+def response_reject_reason(text: str, tokens: int,
+                           min_tokens: int = MIN_ANSWER_TOKENS) -> str | None:
+    """Response-side predicates on one assistant span (M2, spec sections 10.1, 11.3)."""
     if not text.strip():
         return "empty_assistant"
     if text.count(THINK_OPEN) != text.count(THINK_CLOSE):
         return "unbalanced_think_tags"
-    if ex.tokens < MIN_ANSWER_TOKENS:
+    if tokens < min_tokens:
         return "too_short"
-    if ex.tokens > MAX_ANSWER_TOKENS:
+    if tokens > MAX_ANSWER_TOKENS:
         return "too_long"
     if textutil.repeating_ngram_ratio(text) > LOOP_RATIO_MAX:
         return "looping"
@@ -89,8 +93,48 @@ def example_reject_reason(ex: Example) -> str | None:
     return None
 
 
+def _response_text(message: dict) -> str:
+    """Assistant text for filtering. A tool-call-only turn contributes its calls, so a
+    legitimate function call is not mistaken for an empty turn."""
+    content = message.get("content")
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        text = "".join(p.get("text", "") for p in content if p.get("type") == "text")
+    else:
+        text = ""
+    if not text.strip() and message.get("tool_calls"):
+        return json.dumps(message["tool_calls"], ensure_ascii=False)
+    return text
+
+
+def example_reject_reason(ex: Example) -> str | None:
+    """Single-turn response predicates. M2 runs these on teacher completions."""
+    for m in reversed(ex.messages):
+        if m.get("role") == "assistant":
+            return response_reject_reason(_response_text(m), ex.tokens)
+    return "empty_assistant"
+
+
+def trajectory_reject_reason(traj) -> str | None:
+    """Run the response predicates on every assistant turn; reject if any turn fails.
+
+    Chat turns are shorter than standalone answers, so the per-turn minimum is
+    `MIN_TURN_TOKENS`.
+    """
+    for i, m in enumerate(traj.messages):
+        if m.get("role") != "assistant":
+            continue
+        text = _response_text(m)
+        reason = response_reject_reason(text, textutil.count_tokens(text),
+                                        min_tokens=MIN_TURN_TOKENS)
+        if reason:
+            return f"turn {i}: {reason}"
+    return None
+
+
 if __name__ == "__main__":
-    from .canonical import Example
+    from .canonical import Example, Trajectory
 
     def mk(text, tokens=200):
         return Example(id="f", domain="reasoning", origin="prebuilt", source={"name": "s"},
@@ -105,3 +149,22 @@ if __name__ == "__main__":
     print("short:", example_reject_reason(mk("ok", tokens=3)))
     print("loop:", example_reject_reason(mk(" ".join(["a b c d e f g h"] * 30))))
     print("non-english:", example_reject_reason(mk("这是一段中文回答，用于测试语言过滤。")))
+
+    good = Trajectory(id="t1", domain="roleplay", origin="teacher", source={"name": "s"},
+                      messages=[{"role": "user", "content": "hi"},
+                                {"role": "assistant", "content": "Hello there, how are you?"}])
+    refusal = Trajectory(id="t2", domain="roleplay", origin="teacher", source={"name": "s"},
+                         messages=[{"role": "user", "content": "hi"},
+                                   {"role": "assistant", "content": "A perfectly fine answer to your question."},
+                                   {"role": "user", "content": "again"},
+                                   {"role": "assistant", "content": "I cannot do that."}])
+    print("traj clean:", trajectory_reject_reason(good))
+    print("traj refusal:", trajectory_reject_reason(refusal))
+
+    tool_only = Trajectory(
+        id="t3", domain="coding", origin="teacher", source={"name": "s"},
+        messages=[{"role": "user", "content": "book it"},
+                  {"role": "assistant", "content": "",
+                   "tool_calls": [{"id": "c", "type": "function",
+                                   "function": {"name": "book", "arguments": "{\"n\": 2}"}}]}])
+    print("traj tool-only kept:", trajectory_reject_reason(tool_only))
