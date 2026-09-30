@@ -1481,6 +1481,8 @@ git commit -m "feat(dataset): turn and trajectory verification"
 
 ### Task 9: Per-turn response filters (spec §10.1)
 
+> **Refusal predicate removed (decided during Task 15).** Once the reasoning trace is stored inside `content` (see the Task 2 note), substring refusal matching false-fired on incidental phrases in the reasoning — measured: a coding row was rejected because its reasoning quoted the example `"I want to go but I can't because I'm busy"`. Per the user's instruction the `refusal` predicate and `REFUSAL_MARKERS` were deleted outright. The response filters now cover empty / unbalanced-think / too_short / too_long / looping / non_english only.
+
 **Files:**
 - Modify: `tools/dataset/filters.py`
 
@@ -2662,6 +2664,8 @@ Expected: `status ok`; then the Task 2 smoke lines.
 & "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.generate --mode all --root datasets/qwen35-4b-sft --limit 300 --val-limit 100 --multi-limit 100 --sim-limit 40 --magpie-limit 20
 ```
 Expected: `magpie prompts: 40 -> ...`, `seeded: accepted N of M`, `trajectories: accepted N of M`, `simulated: accepted N of M`, `merged: train X, val Y, pass_rate 0.xx`, with `X >= 400`. Because every call is cached, a re-run prints the same numbers.
+
+> **Actual M2 run used smaller flags + no token cap (decided during Task 15).** The teacher emits a long reasoning trace per call (~4k tokens, measured ~5 min/call on the local iGPU), so the milestone run was shrunk to `--limit 100 --val-limit 25 --multi-limit 20 --sim-limit 8 --magpie-limit 10`, and `TeacherClient.complete` no longer sends `max_tokens` — a 4096 cap truncated rows mid-reasoning with no answer at all. The cache was cleared before this run.
 
 Two scale notes the flags understate:
 

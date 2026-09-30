@@ -15,11 +15,12 @@ import time
 import urllib.error
 import urllib.request
 
-# Spec section 10 sampling.
+# Spec section 10 sampling. No max_tokens cap: the teacher must fit its reasoning trace
+# AND the answer into one completion, and a 4096 cap truncated many rows mid-reasoning
+# with no answer at all. The request omits `max_tokens` so the model stops on its own.
 TEMPERATURE = 0.6
 TOP_P = 0.95
 TOP_K = 20
-MAX_TOKENS = 4096
 
 
 class TeacherError(RuntimeError):
@@ -121,16 +122,18 @@ class TeacherClient:
         return template
 
     def complete(self, messages: list[dict], *, store=None, tools=None, thinking: bool = True,
-                 max_tokens: int = MAX_TOKENS, temperature: float = TEMPERATURE,
+                 max_tokens: int | None = None, temperature: float = TEMPERATURE,
                  top_p: float = TOP_P, top_k: int = TOP_K, seed: int | None = None) -> dict:
         """One teacher turn. Returns the assistant message dict (content, tool_calls)."""
         payload = {
             "model": self.model,
             "messages": to_wire_messages(messages, store),
             "temperature": temperature, "top_p": top_p, "top_k": top_k,
-            "max_tokens": max_tokens, "stream": False,
+            "stream": False,
             "chat_template_kwargs": {"enable_thinking": thinking},
         }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
         if tools:
             payload["tools"] = tools
         if seed is not None:

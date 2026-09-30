@@ -31,21 +31,6 @@ _NON_ENGLISH = re.compile(
     r"[\u0400-\u04ff\u0600-\u06ff\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]")
 NON_ENGLISH_RATIO_MAX = 0.02
 
-# The spec (section 9.4) calls this an inverted refusal filter. It is aimed at the
-# prebuilt uncensored sets, whose answers ship refusals by design (section 7.4). M1
-# strips those answers, and the teacher is abliterated so it does not refuse, so this
-# check runs against text that should rarely contain a refusal.
-#
-# Known limitation: bare substring matching also fires on legitimate answers that open
-# with a limitation ("I cannot emphasize enough how important units are", "I must decline
-# to guess and will compute it instead"). Left as specified; the rate is visible in the
-# M2 pass-rate report.
-REFUSAL_MARKERS = (
-    "i cannot", "i can't", "i can not", "i'm unable", "i am unable", "i won't",
-    "i will not", "i must decline", "as an ai language model", "i'm sorry, but",
-)
-
-
 def assistant_text(ex: Example) -> str:
     for m in reversed(ex.messages):
         if m["role"] == "assistant":
@@ -87,9 +72,6 @@ def response_reject_reason(text: str, tokens: int,
         return "looping"
     if len(_NON_ENGLISH.findall(text)) / max(1, len(text)) > NON_ENGLISH_RATIO_MAX:
         return "non_english"
-    low = text.lower()
-    if any(marker in low for marker in REFUSAL_MARKERS):
-        return "refusal"
     return None
 
 
@@ -144,7 +126,6 @@ if __name__ == "__main__":
     print("prompt clean:", prompt_reject_reason("Solve x^2 = 4.", 200))
     print("prompt empty:", prompt_reject_reason("", 0))
     print("clean:", example_reject_reason(mk("A clear worked answer.")))
-    print("refusal:", example_reject_reason(mk("I cannot help with that request.")))
     print("unbalanced:", example_reject_reason(mk("<think>reasoning without a close tag")))
     print("short:", example_reject_reason(mk("ok", tokens=3)))
     print("loop:", example_reject_reason(mk(" ".join(["a b c d e f g h"] * 30))))
@@ -153,13 +134,7 @@ if __name__ == "__main__":
     good = Trajectory(id="t1", domain="roleplay", origin="teacher", source={"name": "s"},
                       messages=[{"role": "user", "content": "hi"},
                                 {"role": "assistant", "content": "Hello there, how are you?"}])
-    refusal = Trajectory(id="t2", domain="roleplay", origin="teacher", source={"name": "s"},
-                         messages=[{"role": "user", "content": "hi"},
-                                   {"role": "assistant", "content": "A perfectly fine answer to your question."},
-                                   {"role": "user", "content": "again"},
-                                   {"role": "assistant", "content": "I cannot do that."}])
     print("traj clean:", trajectory_reject_reason(good))
-    print("traj refusal:", trajectory_reject_reason(refusal))
 
     tool_only = Trajectory(
         id="t3", domain="coding", origin="teacher", source={"name": "s"},

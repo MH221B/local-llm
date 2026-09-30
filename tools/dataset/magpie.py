@@ -45,7 +45,7 @@ def _tool_prompt_seeds(path: Path) -> list[str]:
 
 
 def invent(client: TeacherClient, cache, *, domain: str, seed: str,
-           thinking: bool = False, max_tokens: int = 384) -> str | None:
+           thinking: bool = False) -> str | None:
     template = load_template(domain)
     instruction = template.replace("{seed}", seed)
     key = gencache.request_key({"magpie": domain, "seed": seed, "v": 1})
@@ -54,7 +54,7 @@ def invent(client: TeacherClient, cache, *, domain: str, seed: str,
         msg = client.complete(
             [{"role": "system", "content": "You are a dataset generator."},
              {"role": "user", "content": instruction}],
-            thinking=thinking, max_tokens=max_tokens)
+            thinking=thinking)
         cached = {"completion": {"content": (msg.get("content") or "").strip()}}
         cache.put(key, cached)
     text = cached["completion"]["content"].splitlines()[0].strip() if cached[

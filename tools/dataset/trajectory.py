@@ -127,7 +127,7 @@ def generate_simulated(client: TeacherClient, cache, *, id: str, domain: str, so
         first_user = _gen(client, cache, key,
                           [{"role": "system", "content": SIM_USER_SYSTEM},
                            {"role": "user", "content": "Start a request that uses a tool."}],
-                          thinking=False, max_tokens=256)["content"].strip()
+                          thinking=False)["content"].strip()
     if not first_user:
         return None
     messages.append({"role": "user", "content": first_user})
@@ -135,7 +135,7 @@ def generate_simulated(client: TeacherClient, cache, *, id: str, domain: str, so
     for _ in range(max_tool_turns):
         key = gencache.prefix_key(messages, kind=f"simagent:{id}")
         comp = _gen(client, cache, key, messages, store=store, tools=tools,
-                    thinking=thinking, max_tokens=1024)
+                    thinking=thinking)
         calls = comp.get("tool_calls") or []
         assistant = {"role": "assistant", "content": comp["content"]}
         if not calls:
@@ -151,7 +151,7 @@ def generate_simulated(client: TeacherClient, cache, *, id: str, domain: str, so
             result = _gen(client, cache, tkey,
                           [{"role": "system", "content": SIM_TOOL_SYSTEM},
                            {"role": "user", "content": json.dumps(call.get("function") or {})}],
-                          thinking=False, max_tokens=256)["content"].strip()
+                          thinking=False)["content"].strip()
             messages.append({"role": "tool", "content": result, "tool_call_id": call["id"]})
     else:
         return None  # hit the turn budget without a final answer: not answer-bearing
