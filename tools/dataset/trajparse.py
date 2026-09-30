@@ -122,6 +122,124 @@ def build_hermes(row: dict, index: int, ctx: Ctx) -> Trajectory | None:
     )
 
 
+import re
+
+TOOLACE_DATASET = "Team-ACE/ToolACE"
+# Argument values are quoted strings or scalars and contain no parentheses, so a call can
+# be split at its outermost parens. Function names may contain spaces and balanced parens
+# ("User Feed (Video Posts) V2"), so we split the body on top-level commas (tracking paren
+# depth and quote state) and take the last "(" as the call's opening paren.
+_ARG = re.compile(r"(\w+)\s*=\s*(\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'|\d+|True|False|None)")
+
+
+def _split_calls(body: str) -> list[str]:
+    """Split `A(x), B(y)` into ['A(x)', 'B(y)'] at top-level commas only."""
+    parts: list[str] = []
+    depth, quote, start = 0, "", 0
+    for i, ch in enumerate(body):
+        if quote:
+            if ch == quote and body[i - 1] != "\\":
+                quote = ""
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            parts.append(body[start:i])
+            start = i + 1
+    parts.append(body[start:])
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _toolace_calls(text: str) -> list[dict] | None:
+    """Parse ToolACE's `[Name(arg=val), ...]` DSL into structured calls."""
+    body = text.strip()
+    if not (body.startswith("[") and body.endswith("]")):
+        return None
+    calls: list[dict] = []
+    for chunk in _split_calls(body[1:-1]):
+        if not chunk.endswith(")"):
+            return None
+        name, args_blob = chunk[:-1].rsplit("(", 1)
+        name = name.strip()
+        if not name:
+            return None
+        args: dict = {}
+        for key, raw in _ARG.findall(args_blob):
+            try:
+                args[key] = json.loads(raw)
+            except json.JSONDecodeError:
+                args[key] = raw.strip("'\"")
+        calls.append({"id": f"call_{len(calls)}", "type": "function",
+                      "function": {"name": name,
+                                   "arguments": json.dumps(args, ensure_ascii=False)}})
+    return calls or None
+
+
+def _toolace_schema(system: str) -> list | None:
+    """Extract the embedded JSON function list and wrap it in the OpenAI shape."""
+    start = system.find("[")
+    end = system.rfind("]")
+    if start < 0 or end <= start:
+        return None
+    try:
+        raw = json.loads(system[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+    tools = []
+    for entry in raw:
+        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+            continue
+        tools.append({"type": "function", "function": {
+            "name": entry["name"], "description": entry.get("description", ""),
+            "parameters": entry.get("parameters", {})}})
+    return tools or None
+
+
+def build_toolace(row: dict, index: int, ctx: Ctx) -> Trajectory | None:
+    system = row.get("system") or ""
+    tools = _toolace_schema(system)
+    messages: list[dict] = []
+    # Keep the prose preamble before the embedded JSON function list as the system turn;
+    # the function list itself becomes the structured `tools` field.
+    if "[" in system:
+        preamble = system[:system.find("[")].strip()
+        if preamble:
+            messages.append(system_msg(preamble))
+    pending: list[str] = []
+    for turn in row.get("conversations") or []:
+        frm, value = turn.get("from"), turn.get("value")
+        if not isinstance(value, str):
+            return None
+        if frm == "user":
+            messages.append(user_msg([text_part(value)]))
+        elif frm == "assistant":
+            calls = _toolace_calls(value)
+            if calls:
+                msg = assistant_msg("")
+                msg["tool_calls"] = calls
+                msg["_scaffold"] = True
+                pending = [c["id"] for c in calls]
+                messages.append(msg)
+            else:
+                messages.append(assistant_msg(value))
+        elif frm == "tool":
+            if not pending:
+                return None
+            messages.append({"role": "tool", "content": value, "tool_call_id": pending.pop(0)})
+        else:
+            return None
+    if not messages or messages[-1]["role"] != "assistant":
+        return None
+    return Trajectory(
+        id=f"toolace-{index}", domain=ctx.domain, origin="prebuilt",
+        source=ctx.source(index), messages=messages, tools=tools,
+        meta={"simulated": False},
+    )
+
+
 if __name__ == "__main__":
     ctx = Ctx(HERMES_DATASET, "func_calling", "coding", "apache-2.0")
     row = {
@@ -142,3 +260,21 @@ if __name__ == "__main__":
     print("system stripped:", "<tools>" not in traj.messages[0]["content"])
     print("no-last-assistant dropped:", build_hermes(
         {"conversations": [{"from": "human", "value": "hi"}]}, 4, ctx))
+
+    actx = Ctx(TOOLACE_DATASET, None, "coding", "apache-2.0")
+    trow = {
+        "system": 'You are an expert in composing functions. Here is a list of functions:\n'
+                  '[{"name": "Timezones", "description": "Get times.", "parameters": {}}]',
+        "conversations": [
+            {"from": "user", "value": "What time is it in New York and Tokyo?"},
+            {"from": "assistant", "value": '[Timezones(timezone="New York"), Timezones(timezone="Tokyo")]'},
+            {"from": "tool", "value": '[{"name": "Timezones", "results": {}}]'},
+            {"from": "assistant", "value": "New York is 3pm; Tokyo is 4am."},
+        ],
+    }
+    tt = build_toolace(trow, 9, actx)
+    print("toolace roles:", [m["role"] for m in tt.messages],
+          "calls:", len(tt.messages[2]["tool_calls"]),
+          "tool:", tt.messages[2]["tool_calls"][1]["function"]["arguments"])
+    print("toolace tools:", len(tt.tools), "no-call row dropped:", build_toolace(
+        {"system": "x", "conversations": [{"from": "user", "value": "hi"}]}, 10, actx))
