@@ -9,7 +9,7 @@ from typing import Any, Iterable, Iterator
 DOMAINS = ("reasoning", "coding", "roleplay", "uncensored")
 ORIGINS = ("prebuilt", "teacher")
 PART_TYPES = ("text", "image")
-ROLES = ("system", "user", "assistant")
+ROLES = ("system", "user", "assistant", "tool")
 
 # Opening pleasantries with no request in them. Compared lowercased with trailing
 # "!" / "." stripped. See _is_bare_greeting for why this exists.
@@ -76,6 +76,42 @@ class Prompt:
     messages: list[dict]
     images: list[ImageRef] = field(default_factory=list)
     tools: Any = None
+    tokens: int = 0
+    verify: dict | None = None
+    meta: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "domain": self.domain,
+            "origin": self.origin,
+            "source": self.source,
+            "messages": self.messages,
+            "tools": self.tools,
+            "images": [i.to_dict() for i in self.images],
+            "tokens": self.tokens,
+            "verify": self.verify,
+            "meta": self.meta,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False)
+
+
+@dataclass
+class Trajectory:
+    """A multi-turn record: system + user/assistant/tool turns, ending on an assistant turn.
+
+    M2 stores the whole conversation. Prebuilt tool results are observations and are kept;
+    every assistant turn is teacher-written before the row can be trained (spec section 5.1).
+    """
+    id: str
+    domain: str
+    origin: str
+    source: dict
+    messages: list[dict]
+    tools: Any = None
+    images: list[ImageRef] = field(default_factory=list)
     tokens: int = 0
     verify: dict | None = None
     meta: dict = field(default_factory=dict)
@@ -287,6 +323,186 @@ def iter_jsonl(path: Path) -> Iterator[dict]:
                 yield json.loads(line)
 
 
+def tool_calls_of(message: dict) -> list[dict]:
+    calls = message.get("tool_calls")
+    return calls if isinstance(calls, list) else []
+
+
+def tool_call_arguments(call: dict) -> dict:
+    """A tool call's arguments as a mapping, for template rendering (spec sections 5.1, 11.2).
+
+    Canonical records and the OpenAI wire format both store `arguments` as a JSON string,
+    but the student template iterates it as a mapping (`tool_call.arguments|items`). This
+    is the single place that converts between the two, so the schema stays a string.
+    Returns `{}` when the arguments are absent or unparseable rather than raising; a
+    malformed call is caught by `validate_trajectory`, not silently mis-rendered.
+    """
+    args = (call.get("function") or {}).get("arguments")
+    if isinstance(args, dict):
+        return args
+    if isinstance(args, str) and args.strip():
+        try:
+            parsed = json.loads(args)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def for_template(messages: list[dict]) -> list[dict]:
+    """A render-time view: tool-call `arguments` become mappings, everything else is copied.
+
+    The student template reads `tool_call.arguments|items`, which requires a mapping; the
+    stored form is a JSON string. Convert here rather than mutating the record so the
+    schema and the written JSONL keep the OpenAI string form (spec section 5.1).
+    """
+    out: list[dict] = []
+    for m in messages:
+        calls = m.get("tool_calls")
+        if not calls:
+            out.append(m)
+            continue
+        rendered = []
+        for call in calls:
+            fn = dict(call.get("function") or {})
+            fn["arguments"] = tool_call_arguments(call)
+            rendered.append({**call, "function": fn})
+        out.append({**m, "tool_calls": rendered})
+    return out
+
+
+def declared_tool_names(tools: Any) -> set[str]:
+    names: set[str] = set()
+    for entry in tools or []:
+        fn = entry.get("function") if isinstance(entry, dict) else None
+        if isinstance(fn, dict) and isinstance(fn.get("name"), str):
+            names.add(fn["name"])
+    return names
+
+
+def message_text(message: dict) -> str:
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(p.get("text", "") for p in content if p.get("type") == "text")
+    return ""
+
+
+def final_assistant_text(messages: list[dict]) -> str:
+    for m in reversed(messages):
+        if m.get("role") == "assistant":
+            return message_text(m)
+    return ""
+
+
+def validate_trajectory(t: Trajectory) -> list[str]:
+    """Return a list of problems. Empty list means valid (spec sections 5.1, 11.3)."""
+    problems: list[str] = []
+    if not t.id:
+        problems.append("empty id")
+    if t.domain not in DOMAINS:
+        problems.append(f"bad domain: {t.domain!r}")
+    if t.origin not in ORIGINS:
+        problems.append(f"bad origin: {t.origin!r}")
+    if not isinstance(t.source, dict) or "name" not in t.source:
+        problems.append("source missing name")
+    if not t.messages:
+        return problems + ["no messages"]
+
+    roles = [m.get("role") for m in t.messages]
+    for r in roles:
+        if r not in ROLES:
+            problems.append(f"bad role: {r!r}")
+    if roles[-1] != "assistant":
+        problems.append("last message is not assistant")
+    if "system" in roles and roles[0] != "system":
+        problems.append("system message is not first")
+
+    calls: dict[str, int] = {}
+    answered: set[str] = set()
+    for i, m in enumerate(t.messages):
+        if m.get("role") == "assistant":
+            for call in tool_calls_of(m):
+                cid = call.get("id")
+                if not cid or call.get("type") != "function":
+                    problems.append(f"bad tool_call at message {i}")
+                    continue
+                fn = call.get("function")
+                if not isinstance(fn, dict) or not isinstance(fn.get("name"), str):
+                    problems.append(f"tool_call without function name at message {i}")
+                calls[cid] = i
+                args = (fn or {}).get("arguments")
+                if isinstance(args, str):
+                    try:
+                        json.loads(args)
+                    except json.JSONDecodeError:
+                        problems.append(f"tool_call arguments are not JSON at message {i}")
+        elif m.get("role") == "tool":
+            cid = m.get("tool_call_id")
+            if not cid:
+                problems.append(f"tool message without tool_call_id at message {i}")
+            elif cid not in calls:
+                problems.append(f"tool result {cid!r} has no preceding call")
+            else:
+                answered.add(cid)
+    for cid, idx in calls.items():
+        if cid not in answered:
+            problems.append(f"call {cid!r} at message {idx} has no tool result")
+
+    refs = {i.sha256 for i in t.images}
+    for m in t.messages:
+        content = m.get("content")
+        if isinstance(content, str):
+            continue
+        if not isinstance(content, list):
+            problems.append("content is neither str nor list")
+            continue
+        for part in content:
+            ptype = part.get("type")
+            if ptype not in PART_TYPES:
+                problems.append(f"bad part type: {ptype!r}")
+            if ptype == "image" and part.get("sha256") not in refs:
+                problems.append(f"image part {part.get('sha256')!r} has no ImageRef")
+
+    if t.tools is not None and not isinstance(t.tools, list):
+        problems.append("tools is neither list nor null")
+    if t.tokens < 0:
+        problems.append("negative token count")
+    if t.verify is not None and not isinstance(t.verify, dict):
+        problems.append("verify is neither dict nor null")
+    return problems
+
+
+def _images_from(raw: list) -> list[ImageRef]:
+    return [ImageRef(**{k: d.get(k) for k in ("sha256", "path", "w", "h", "origin_url")})
+            for d in raw or []]
+
+
+def prompt_from_dict(row: dict) -> Prompt:
+    return Prompt(
+        id=row["id"], domain=row["domain"], origin=row["origin"], source=row["source"],
+        messages=row["messages"], images=_images_from(row.get("images")),
+        tools=row.get("tools"), tokens=row.get("tokens", 0),
+        verify=row.get("verify"), meta=row.get("meta") or {})
+
+
+def trajectory_from_dict(row: dict) -> Trajectory:
+    return Trajectory(
+        id=row["id"], domain=row["domain"], origin=row["origin"], source=row["source"],
+        messages=row["messages"], images=_images_from(row.get("images")),
+        tools=row.get("tools"), tokens=row.get("tokens", 0),
+        verify=row.get("verify"), meta=row.get("meta") or {})
+
+
+def example_from_dict(row: dict) -> Example:
+    return Example(
+        id=row["id"], domain=row["domain"], origin=row["origin"], source=row["source"],
+        messages=row["messages"], images=_images_from(row.get("images")),
+        tools=row.get("tools"), tokens=row.get("tokens", 0),
+        meta=row.get("meta") or {})
+
+
 if __name__ == "__main__":
     good = Example(
         id="smoke-1", domain="reasoning", origin="prebuilt",
@@ -303,3 +519,38 @@ if __name__ == "__main__":
     print("good:", validate(good))
     print("bad:", len(validate(bad)), "problems")
     print("prompt:", validate_prompt(prompt), [m["role"] for m in prompt.messages])
+
+    ok_traj = Trajectory(
+        id="traj-1", domain="coding", origin="teacher", source={"name": "smoke"},
+        messages=[
+            {"role": "user", "content": "Book a table for two."},
+            {"role": "assistant", "content": "Checking.",
+             "tool_calls": [{"id": "call_1", "type": "function",
+                             "function": {"name": "book", "arguments": "{\"n\": 2}"}}]},
+            {"role": "tool", "content": "{\"ok\": true}", "tool_call_id": "call_1"},
+            {"role": "assistant", "content": "Booked — T-991."},
+        ],
+        tools=[{"type": "function", "function": {"name": "book"}}],
+        tokens=42,
+    )
+    bad_traj = Trajectory(
+        id="traj-2", domain="coding", origin="teacher", source={"name": "smoke"},
+        messages=[
+            {"role": "assistant", "content": "x",
+             "tool_calls": [{"id": "call_1", "type": "function",
+                             "function": {"name": "book", "arguments": "{bad"}}]},
+            {"role": "tool", "content": "r", "tool_call_id": "call_9"},
+        ],
+    )
+    print("traj ok:", validate_trajectory(ok_traj),
+          [m["role"] for m in ok_traj.messages])
+    print("traj bad:", len(validate_trajectory(bad_traj)), "problems")
+
+    call = ok_traj.messages[1]["tool_calls"][0]
+    print("args as mapping:", tool_call_arguments(call))
+    print("args unparseable:", tool_call_arguments(
+        {"function": {"name": "book", "arguments": "{bad"}}))
+    rendered = for_template(ok_traj.messages)
+    print("for_template converts:", isinstance(
+        rendered[1]["tool_calls"][0]["function"]["arguments"], dict),
+        "| record unchanged:", isinstance(call["function"]["arguments"], str))
