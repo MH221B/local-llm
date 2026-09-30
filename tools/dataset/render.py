@@ -108,7 +108,11 @@ def run(*, dataset: Path, template_path: Path, sample: int,
     tags = {"open": 0, "close": 0}
     for row in rows:
         try:
-            text = render(template_text, strip_image_data(row["messages"]))
+            # Same conversion as the multi-turn path above: the template iterates
+            # `tool_call.arguments|items`, so stored JSON strings must become mappings
+            # first. Skipping this crashed the Task 15 gate on the first tool-call row
+            # ("Can only get item pairs from a mapping").
+            text = render(template_text, canonical.for_template(strip_image_data(row["messages"])))
         except TemplateError as exc:
             failures += 1
             print(f"FAIL {row['id']}: {exc}")

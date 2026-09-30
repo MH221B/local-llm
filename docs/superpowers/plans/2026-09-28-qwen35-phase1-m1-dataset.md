@@ -2663,6 +2663,8 @@ if __name__ == "__main__":
 
 - [x] **Step 4: Write `tools/dataset/calibrate.py`**
 
+> **Superseded in M2 (Task 15):** the `run` loop below required one assistant message over `MIN_CHARS`, which emitted zero chunks on real data (longest message 6,181 chars vs the 8,000 floor) and failed the acceptance step. `calibrate.py` now joins every assistant turn in a row and accumulates rows into chunks; see the M2 plan's Task 15 Step 5 note. The code below records what M1 shipped.
+
 ```python
 """Carve calibration chunks for Phase 3's llama-imatrix (spec section 3)."""
 from __future__ import annotations

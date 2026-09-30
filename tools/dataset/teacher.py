@@ -15,12 +15,17 @@ import time
 import urllib.error
 import urllib.request
 
-# Spec section 10 sampling. No max_tokens cap: the teacher must fit its reasoning trace
-# AND the answer into one completion, and a 4096 cap truncated many rows mid-reasoning
-# with no answer at all. The request omits `max_tokens` so the model stops on its own.
+# Spec section 10 sampling, with the anti-repetition pair the teacher's parent model
+# publishes (ornith-ai/Ornith-1.5-9B): presence_penalty 1.5 for general tasks and 0.0 for
+# precise coding, min_p 0.0 (not llama.cpp's 0.05 default). The teacher inherits
+# Ornith-1.5's agentic half and, with no anti-repetition pressure at all, loops on
+# open-ended prompts (measured: one 505-char prompt generated 21,038 tokens without
+# stopping, and a second ran past the client timeout).
 TEMPERATURE = 0.6
 TOP_P = 0.95
 TOP_K = 20
+MIN_P = 0.0
+PRESENCE_PENALTY = 1.5
 
 
 class TeacherError(RuntimeError):
@@ -137,6 +142,7 @@ class TeacherClient:
             "model": self.model,
             "messages": to_wire_messages(messages, store),
             "temperature": temperature, "top_p": top_p, "top_k": top_k,
+            "min_p": MIN_P, "presence_penalty": PRESENCE_PENALTY,
             "stream": False,
             "chat_template_kwargs": {"enable_thinking": thinking},
         }

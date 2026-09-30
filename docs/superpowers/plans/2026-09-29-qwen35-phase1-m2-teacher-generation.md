@@ -2671,7 +2671,7 @@ git commit -m "feat(dataset): M2 driver and pass-rate manifest"
 **Files:**
 - Modify: `datasets/qwen35-4b-sft/README.md` (created in M1 Task 16 Step 7)
 
-- [ ] **Step 1: Confirm the teacher is up and the template is current**
+- [x] **Step 1: Confirm the teacher is up and the template is current**
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8086/health
@@ -2679,12 +2679,14 @@ Invoke-RestMethod http://127.0.0.1:8086/health
 ```
 Expected: `status ok`; then the Task 2 smoke lines.
 
-- [ ] **Step 2: Run M2 end to end**
+- [x] **Step 2: Run M2 end to end**
 
 ```powershell
 & "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.generate --mode all --root datasets/qwen35-4b-sft --limit 300 --val-limit 100 --multi-limit 100 --sim-limit 40 --magpie-limit 20
 ```
 Expected: `magpie prompts: 40 -> ...`, `seeded: accepted N of M`, `trajectories: accepted N of M`, `simulated: accepted N of M`, `merged: train X, val Y, pass_rate 0.xx`, with `X >= 400`. Because every call is cached, a re-run prints the same numbers.
+
+> **Sampling: the teacher needs the anti-repetition pair its parent model publishes (Task 15).** `TeacherClient` now sends `presence_penalty=1.5` and `min_p=0.0`, from the recommended recipe of the teacher's agentic parent: *"general tasks: temperature=1.0, top_p=0.95, top_k=20, min_p=0.0, presence_penalty=1.5"* and *"precise coding: temperature=0.6, … presence_penalty=0.0"* (`ornith-ai/Ornith-1.5-9B`). We had been running with **no anti-repetition pressure at all** (`presence_penalty` unset, `repeat_penalty` 1.0, no DRY, `min_p` at llama.cpp's 0.05), which is why the model loops on open-ended prompts. Measured A/B on the same prompt and seed (`magpie-tools-2`, seed `865351961`): **21,038 tokens and still generating at the 30-minute client timeout before, 174 tokens in 10.7 s after** — the row then accepts (`seeded` 7→8 of 12, `train` 9→10, `pass_rate` 0.6667→0.7222). `--reasoning-budget 6144` stays as a backstop, but the sampling fix is the principled one.
 
 > **The local M2 run is a pipeline smoke, not the corpus (decided during Task 15).** The teacher emits a long reasoning trace per call (~4k tokens, measured ~5 min/call on the local iGPU), so a full local run is tens of hours for no added signal: the point locally is to prove every shape, verifier, filter, merge and manifest step fires end-to-end. The acceptance run therefore uses `--limit 5 --val-limit 2 --multi-limit 3 --sim-limit 2 --magpie-limit 3` (≈40 calls). The ~25k corpus is M3 on Colab vLLM, so Task 15's `X >= 400` expectation is a scale-out target, not a local gate. Separately, `TeacherClient.complete` no longer sends `max_tokens` — a 4096 cap truncated rows mid-reasoning with no answer at all. The cache was cleared before this run.
 
@@ -2693,7 +2695,7 @@ Two scale notes the flags understate:
 - `--limit` is **per pool**, so `--limit 300` attempts up to **900** single-turn rows (300 each from `prompts/train.jsonl`, `verification/seeds.jsonl`, `prompts/magpie.jsonl`). `M` in the seeded line is ~900 + 100 val, not 300.
 - `verification/seeds.jsonl` is **100% coding and 100% oracle-bearing** (1,001 rows, all `python_tests`/`python_io`) and has no domain mix, so its 300 attempts land entirely in `coding` and pass or fail on executed code. That drags the seeded pass rate below the `prompts/train.jsonl` rate and skews `train_final.by_domain` toward coding; read `pass_rate_by_source` rather than the single blended `pass_rate` when setting M3 caps.
 
-- [ ] **Step 3: Read the pass rates and drop reasons**
+- [x] **Step 3: Read the pass rates and drop reasons**
 
 ```powershell
 $m = Get-Content datasets/qwen35-4b-sft/manifest.json | ConvertFrom-Json
@@ -2704,7 +2706,7 @@ $m.train_final.by_domain; $m.train_final.token_share
 ```
 Expected: a `pass_rate` between 0 and 1; a `pass_rate_by_source` map keyed by `dataset|domain` (the M3 cap guide, spec §10.1); `drops` keys limited to legitimate reasons (`verify_failed`, `looping`, `too_short`, `too_long`, `non_english`, `unbalanced_think_tags`, `empty_assistant`, `turn_structure`, `invalid`, `teacher_error`); `train_final.by_domain` covering all four domains; non-zero token share.
 
-- [ ] **Step 4: Verify every accepted record and its image refs**
+- [x] **Step 4: Verify every accepted record and its image refs**
 
 Run (from the repo root; one line):
 ```powershell
@@ -2712,14 +2714,18 @@ Run (from the repo root; one line):
 ```
 Expected: `checked N bad 0` — 100% schema-valid and every image sha resolves (spec §11.3).
 
-- [ ] **Step 5: Export calibration chunks (now that answers exist)**
+- [x] **Step 5: Export calibration chunks (now that answers exist)**
 
 ```powershell
 & "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.calibrate --dataset datasets/qwen35-4b-sft/train.jsonl --out datasets/qwen35-4b-sft/calibration.txt --chunks 20
 ```
 Expected: `calibration chunks written: N -> ...` with `N > 0`. This is Phase 3's `llama-imatrix` input (spec §3).
 
-- [ ] **Step 6: Re-run the render gate on real records and the contamination guard**
+> **`calibrate` packs chunks across rows (fixed during Task 15 — this step used to fail).** The module required a *single* assistant message longer than `MIN_CHARS` (8,000 chars) and emitted nothing otherwise, so the first acceptance run printed `calibration chunks written: 0` and exited 1. No single message is a whole 2-4k-token chunk in practice: measured on this run, the longest assistant message was 6,181 chars. `calibrate.assistant_text` now joins *every* assistant turn in a row, and `run` accumulates rows until `min_chars`, then writes up to `max_chars`. Measured after the fix: `calibration chunks written: 2 -> ...` (8,888 and 16,002 chars), exit 0. A regression smoke packs eight ~6k-char rows into 3 chunks.
+>
+> **Chunks are rendered through `student.jinja` (same fix).** The teacher's other parent publishes how its own imatrix corpus is built: *"rendered through this model's own chat template … and processed with `--parse-special`, so chat-format special tokens contribute to the importance matrix"* (`bartowski/MiMo-V2.6-Distill-Qwen-9B-GGUF`). Bare assistant text never exercises `<|im_start|>`/`<|im_end|>` or the think markers, so `calibrate.row_text` now renders each row via `render.render` + `canonical.for_template`, with `--template` selecting the template (default `tools/dataset/student.jinja`; a missing file exits 2). Measured: 2 chunks, now carrying the chat markers. Phase 3 must pass `--parse-special` to `llama-imatrix`.
+
+- [x] **Step 6: Re-run the render gate on real records and the contamination guard**
 
 ```powershell
 & "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.render --dataset datasets/qwen35-4b-sft/train.jsonl --template tools/dataset/student.jinja --sample 200
@@ -2727,11 +2733,15 @@ Expected: `calibration chunks written: N -> ...` with `N > 0`. This is Phase 3's
 ```
 Expected: `0 template failures`, `probe think block survived: True`, `generation prompt opens thinking: True`, a `VERDICT:` line; then a `collisions:` count. Expect **0 exact** collisions and a small non-zero **NEAR** count: the in-the-wild jailbreak corpus supplies both `seeds/uncensored.jsonl` prompts and the quarantined refusal slice, so spec §8's intended in-distribution overlap shows as NEAR, not as a leak. A non-zero **exact** count is the failure.
 
-- [ ] **Step 7: Update the README with the M2 commands and measured numbers**
+> **This gate crashed on its first real run (fixed during Task 15).** `render.run` called the template with raw JSONL messages, so `tool_call.arguments` was still a JSON *string* while `student.jinja` iterates it as a mapping: `TypeError: Can only get item pairs from a mapping` at the first tool-call row. That is the risk Task 13's review flagged ("`canonical.for_template` is the one conversion point"); `render.check_multiturn` already used it, the single-turn path did not. Fixed, and the gate now passes: `rendered 9 examples, 0 template failures`, `think tags open=16 close=16`, `VERDICT: think tags balanced`, exit 0. Measured on the same run: `collisions: 0` (0 exact), which is the pass condition — the blended `pass_rate` is 0.7222 with `train 10, val 3`.
 
-Append to `datasets/qwen35-4b-sft/README.md` a `## M2 — teacher generation` section containing: the teacher launch command (Task 2 Step 2), the `generate.py --mode all` command with the flags actually used, the measured `pass_rate` and per-domain token share, the drop-reason table, the calibrate command, and a note that `prompts/train.jsonl` + `verification/seeds.jsonl` are M2's inputs while `train.jsonl` / `val.jsonl` are its outputs. Note the Teacher model divergence: spec §10 names `mradermacher/Ornith-1.5-9B-Abliterated-i1-GGUF`; the local run used `MiMo-Ornith-9B-AGSI-Abliterated-HQ.i1-Q4_K_S.gguf` + `.mmproj-BF16.gguf`.
+- [x] **Step 7: Update the rebuild guide with the M2 commands and measured numbers**
 
-- [ ] **Step 8: Commit**
+> **Target corrected:** this step said `datasets/qwen35-4b-sft/README.md`, but M1's Task 16 Step 7 already established that `.gitignore` excludes `datasets/`, so a file written there can never be committed — the guide lives at `docs/qwen35-4b-sft-rebuild.md`. The `## M2 — teacher generation` section was appended there, and section 8's calibrate command was corrected (it pointed at `prompts/train.jsonl`, M2's input, rather than M2's output `train.jsonl`).
+
+Append to `docs/qwen35-4b-sft-rebuild.md` a `## M2 — teacher generation` section containing: the teacher launch command (Task 2 Step 2), the `generate.py --mode all` command with the flags actually used, the measured `pass_rate` and per-domain token share, the drop-reason table, the calibrate command, and a note that `prompts/train.jsonl` + `verification/seeds.jsonl` are M2's inputs while `train.jsonl` / `val.jsonl` are its outputs. Note the Teacher model divergence: spec §10 names `mradermacher/Ornith-1.5-9B-Abliterated-i1-GGUF`; the local run used `MiMo-Ornith-9B-AGSI-Abliterated-HQ.i1-Q4_K_S.gguf` + `.mmproj-BF16.gguf`.
+
+- [x] **Step 8: Commit**
 
 ```bash
 git add datasets/qwen35-4b-sft/README.md

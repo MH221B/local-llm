@@ -131,11 +131,109 @@ configs are the eval side for that pass.
 
 ### 8. After M2 — calibration (Task 16, spec §3)
 
-`calibrate.py` needs completed answers, so it runs on the teacher-written
-`prompts/train.jsonl`, not the M1 prompt file.
+`calibrate.py` needs completed answers, so it runs on M2's merged `train.jsonl`, not the M1
+prompt file. It packs rows into 2-4k-token chunks and renders each row through
+`tools/dataset/student.jinja`, so the chat special tokens reach the importance matrix — pass
+`--parse-special` to `llama-imatrix` in Phase 3. Full detail in **M2 — teacher generation**
+below.
 
 ```powershell
-& "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.calibrate --dataset datasets/qwen35-4b-sft/prompts/train.jsonl --out datasets/qwen35-4b-sft/calibration.txt
+& "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.calibrate --dataset datasets/qwen35-4b-sft/train.jsonl --out datasets/qwen35-4b-sft/calibration.txt --chunks 200
+```
+
+## M2 — teacher generation (spec §10, §12)
+
+M2 turns the M1 prompt columns into training rows: the teacher writes each assistant turn,
+`verify.py` runs the seed oracles, `filters.py` applies the response predicates, and
+`generate.py` merges the shards.
+
+**Inputs → outputs.** `prompts/train.jsonl`, `prompts/val.jsonl`, `verification/seeds.jsonl`
+and `prompts/trajectories.jsonl` are M2's **inputs**; `train.jsonl`, `val.jsonl`,
+`manifest.json` and `calibration.txt` are its **outputs**. `m2/` holds the intermediates:
+`single.jsonl`, `val.jsonl`, `trajectory.jsonl`, `simulated.jsonl`, `cache.jsonl` (one line
+per completed request, so a re-run replays), `rejected.jsonl` (every drop **with its
+completion**), and the per-phase `*.stats.json` pass rates.
+
+The reasoning trace lives inside `messages[…].content` as a leading
+`<think>…</think>` block, not in a separate `reasoning_content` field: the server splits it
+out and `teacher._fold_reasoning` folds it back, because the spec, `student.jinja`, the
+filters and the verifier all expect it in `content`. `student.jinja` splits it out again at
+render time.
+
+### Teacher server
+
+The spec names `mradermacher/Ornith-1.5-9B-Abliterated-i1-GGUF` (spec §10); the local run used
+**`MiMo-Ornith-9B-AGSI-Abliterated-HQ.i1-Q4_K_S.gguf` + `.mmproj-BF16.gguf`** instead, so its
+numbers are not directly comparable to a spec-model run.
+
+```powershell
+& "$PWD\llama-cpp\llama-server.exe" `
+  -m models\MiMo-Ornith-9B-AGSI-Abliterated-HQ.i1-Q4_K_S.gguf `
+  --mmproj models\MiMo-Ornith-9B-AGSI-Abliterated-HQ.mmproj-BF16.gguf `
+  -ngl 99 -fa on -np 1 --port 8086 `
+  --jinja --reasoning-format deepseek --reasoning-preserve `
+  -c 131072 --reasoning-budget 6144
+```
+
+- `-c 131072` is cheap for this architecture: only the 8 full-attention layers carry a KV
+  cache (~32 KiB/token at f16); the 24 linear-attention layers hold a constant-size state.
+- `--reasoning-budget 6144` is a backstop that forces `</think>` and an answer instead of
+  letting a trace run to the context limit. It is not from the model card.
+- **Sampling** follows the teacher's parent model card (`ornith-ai/Ornith-1.5-9B`, which
+  publishes `presence_penalty=1.5, min_p=0.0` for general tasks) rather than the spec alone:
+  `temperature=0.6, top_p=0.95, top_k=20, min_p=0.0, presence_penalty=1.5`. Without the
+  penalty the model loops on open-ended prompts — measured A/B at the same seed
+  (`magpie-tools-2`, `865351961`): **21,038 tokens and still going at the 30-minute client
+  timeout before, 174 tokens in 10.7 s after.**
+
+### Generation
+
+```powershell
+& "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.generate --mode all `
+  --root datasets/qwen35-4b-sft --limit 3 --val-limit 3 --multi-limit 3 --sim-limit 3 --magpie-limit 3
+```
+
+The local run is a **pipeline smoke, not the corpus** — the point is that every shape, oracle,
+filter, merge and manifest step fires end to end. `--limit` is *per pool*, so the M3 handoff's
+larger flags are the real target. Every call is cached, so a re-run only regenerates the rows
+that are absent from `m2/cache.jsonl`.
+
+### Measured numbers (local smoke, 2026-09-30)
+
+| metric | value |
+|---|---|
+| seeded | 8 accepted of 12 |
+| trajectories | 2 accepted of 3 |
+| simulated | 3 accepted of 3 |
+| merged | train 10, val 3, blended `pass_rate` **0.7222** |
+| `train_final.by_domain` | coding 6, roleplay 2, uncensored 1, reasoning 1 |
+| `train_final.token_share` | coding 0.859, roleplay 0.083, uncensored 0.045, reasoning 0.014 |
+| `pass_rate_by_source` | gsm8k 1.0 · smoltalk 1.0 · in-the-wild 1.0 · the_cauldron 1.0 · teacher:uncensored 1.0 · teacher:tools 1.0 · CodeFeedback 0.5 · **mbpp 0.0** |
+| trace coverage | 9 of 9 train rows carry a `<think>` block |
+
+`coding` dominates the token share because `verification/seeds.jsonl` is 100% coding and
+oracle-bearing, so read `pass_rate_by_source` rather than the blended `pass_rate` when
+setting M3 caps.
+
+The `mbpp|coding` 0.0 is the one open question: all three sampled MBPP seeds fail
+`verify_failed` (executed tests raising `NameError` for the expected function name). It is
+unresolved — the completions for those three rows predate `rejected.jsonl`, so re-running that
+pool is what will show whether the oracle is naming-strict or the model is wrong.
+
+Drop reasons this run (every drop is now written to `m2/rejected.jsonl` with its completion):
+
+| reason | stage | rows |
+|---|---|---|
+| `verify_failed` | seeded | 3 (all `mbpp\|coding`) |
+| `teacher_error` | seeded | 1 (a cached skip: `codefeedback-239`) |
+| `turn_structure` | trajectory | 1 |
+
+### Calibration
+
+Runs on M2's output, not M1's prompts:
+
+```powershell
+& "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.calibrate --dataset datasets/qwen35-4b-sft/train.jsonl --out datasets/qwen35-4b-sft/calibration.txt --chunks 200
 ```
 
 ## What the manifest records
@@ -148,6 +246,12 @@ configs are the eval side for that pass.
   `no_user_turn`, `duplicate_images`, `invalid`.
 - `train` / `val` — examples, per-domain counts and shares, token totals and shares,
   image-bearing counts.
+- `m2` (added by `generate.py --mode all`) — `seeded` / `trajectory` / `simulated` stats with
+  their `drops` and `pass_rate_by_source`, plus `pass_rate` and `train_written` /
+  `val_written`. Legitimate M2 drop reasons: `verify_failed`, `too_short`, `too_long`,
+  `unbalanced_think_tags`, `empty_assistant`, `turn_structure`, `invalid`, `teacher_error`.
+  Response-quality reasons (`refusal`, `looping`, `non_english`) were removed during M2 Task 15
+  because they false-fired on the reasoning trace; `rejected.jsonl` carries the completions.
 
 ## Caveats
 
@@ -167,12 +271,16 @@ configs are the eval side for that pass.
 
 ## Verifying a rebuild
 
-Each module has a `__main__` smoke check with known-good output:
+Most modules have a `__main__` smoke check with known-good output. `render` is the exception —
+it requires `--dataset` and `--template`, so it is exercised by step 3's gate command and by M2
+Task 15 step 6 instead.
 
 ```powershell
-foreach ($m in 'canonical','imgstore','textutil','seeds','sources','domains','dedup','filters','split','report','render','calibrate') {
+foreach ($m in 'canonical','imgstore','textutil','seeds','sources','domains','dedup','filters','split','report','calibrate') {
   & "$HOME\miniconda3\envs\dataset\python.exe" -m "tools.dataset.$m"
 }
+# render needs arguments:
+& "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.render --dataset datasets/qwen35-4b-sft/train.jsonl --template tools/dataset/student.jinja --sample 200
 ```
 
 Every one prints a benign `<frozen runpy>: RuntimeWarning` under `python -m`; it is not
