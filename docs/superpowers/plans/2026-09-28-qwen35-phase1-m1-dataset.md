@@ -1638,6 +1638,8 @@ git commit -m "feat(dataset): frozen source table, quota allocator, domain rules
 
 ### Task 12: Dedup and filters
 
+> **Superseded in M2:** the `refusal` predicate and `REFUSAL_MARKERS` shown below were deleted outright during M2 Task 15 (they false-fired once the teacher's reasoning trace was stored inside `content`). The current filter set is empty / unbalanced-think / too_short / too_long / looping / non_english; see the M2 plan's Task 9 note. The code block below records what M1 shipped.
+
 **Files:**
 - Create: `tools/dataset/dedup.py`
 - Create: `tools/dataset/filters.py`

@@ -1496,6 +1496,21 @@ In `tools/dataset/filters.py`, add `import json` to the imports at the top, then
 MIN_TURN_TOKENS = 4
 
 
+def _loop_ratio(text: str) -> float:
+    """Degenerate-repeat ratio for one assistant span, scored on each part separately.
+
+    The teacher's reasoning trace frequently drafts the answer verbatim before emitting
+    it, so scoring the concatenation counts the draft as a repeat and flags legitimate
+    rows (measured: a row whose trace and answer each scored 0.0 scored 0.070 joined,
+    over the 0.05 threshold, and was dropped as `looping`).
+    """
+    if THINK_CLOSE in text:
+        trace, answer = text.split(THINK_CLOSE, 1)
+    else:
+        trace, answer = "", text
+    return max(textutil.repeating_ngram_ratio(trace), textutil.repeating_ngram_ratio(answer))
+
+
 def response_reject_reason(text: str, tokens: int,
                            min_tokens: int = MIN_ANSWER_TOKENS) -> str | None:
     """Response-side predicates on one assistant span (M2, spec sections 10.1, 11.3)."""
@@ -1507,13 +1522,10 @@ def response_reject_reason(text: str, tokens: int,
         return "too_short"
     if tokens > MAX_ANSWER_TOKENS:
         return "too_long"
-    if textutil.repeating_ngram_ratio(text) > LOOP_RATIO_MAX:
+    if _loop_ratio(text) > LOOP_RATIO_MAX:
         return "looping"
     if len(_NON_ENGLISH.findall(text)) / max(1, len(text)) > NON_ENGLISH_RATIO_MAX:
         return "non_english"
-    low = text.lower()
-    if any(marker in low for marker in REFUSAL_MARKERS):
-        return "refusal"
     return None
 
 
@@ -1573,22 +1585,22 @@ if __name__ == "__main__":
     print("prompt clean:", prompt_reject_reason("Solve x^2 = 4.", 200))
     print("prompt empty:", prompt_reject_reason("", 0))
     print("clean:", example_reject_reason(mk("A clear worked answer.")))
-    print("refusal:", example_reject_reason(mk("I cannot help with that request.")))
     print("unbalanced:", example_reject_reason(mk("<think>reasoning without a close tag")))
     print("short:", example_reject_reason(mk("ok", tokens=3)))
     print("loop:", example_reject_reason(mk(" ".join(["a b c d e f g h"] * 30))))
+    # Regression: the trace drafts the answer, so the joined text repeats. Scored per
+    # span this is clean; scored joined it would trip `looping`.
+    drafted = " ".join(f"word{i}" for i in range(20))
+    print("draft-echo not looping:",
+          example_reject_reason(mk(f"<think>Draft: {drafted}</think>\n\n{drafted}")))
+    print("repeating answer still looping:",
+          example_reject_reason(mk(f"<think>short plan</think>\n\n{' '.join(['a b c d e f g h'] * 30)}")))
     print("non-english:", example_reject_reason(mk("这是一段中文回答，用于测试语言过滤。")))
 
     good = Trajectory(id="t1", domain="roleplay", origin="teacher", source={"name": "s"},
                       messages=[{"role": "user", "content": "hi"},
                                 {"role": "assistant", "content": "Hello there, how are you?"}])
-    refusal = Trajectory(id="t2", domain="roleplay", origin="teacher", source={"name": "s"},
-                         messages=[{"role": "user", "content": "hi"},
-                                   {"role": "assistant", "content": "A perfectly fine answer to your question."},
-                                   {"role": "user", "content": "again"},
-                                   {"role": "assistant", "content": "I cannot do that."}])
     print("traj clean:", trajectory_reject_reason(good))
-    print("traj refusal:", trajectory_reject_reason(refusal))
 
     tool_only = Trajectory(
         id="t3", domain="coding", origin="teacher", source={"name": "s"},
@@ -1605,9 +1617,10 @@ Run (from the repo root):
 ```powershell
 & "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.filters
 ```
-Expected: `prompt clean: None`, `prompt empty: empty_prompt`, `clean: None`, `refusal`,
-`unbalanced`, `short`, `loop`, `non_english`, then `traj clean: None`,
-`traj refusal: turn 3: refusal`, and `traj tool-only kept: None`.
+Expected: `prompt clean: None`, `prompt empty: empty_prompt`, `clean: None`,
+`unbalanced: unbalanced_think_tags`, `short: too_short`, `loop: looping`,
+`draft-echo not looping: None`, `repeating answer still looping: looping`,
+`non-english: non_english`, then `traj clean: None` and `traj tool-only kept: None`.
 
 - [x] **Step 4: Commit**
 
@@ -2683,7 +2696,7 @@ $m.m2.seeded.pass_rate_by_source; $m.m2.trajectory.pass_rate_by_source; $m.m2.si
 $m.m2.seeded.drops; $m.m2.trajectory.drops; $m.m2.simulated.drops
 $m.train_final.by_domain; $m.train_final.token_share
 ```
-Expected: a `pass_rate` between 0 and 1; a `pass_rate_by_source` map keyed by `dataset|domain` (the M3 cap guide, spec §10.1); `drops` keys limited to legitimate reasons (`verify_failed`, `refusal`, `looping`, `too_short`, `too_long`, `non_english`, `unbalanced_think_tags`, `empty_assistant`, `turn_structure`, `invalid`, `teacher_error`); `train_final.by_domain` covering all four domains; non-zero token share.
+Expected: a `pass_rate` between 0 and 1; a `pass_rate_by_source` map keyed by `dataset|domain` (the M3 cap guide, spec §10.1); `drops` keys limited to legitimate reasons (`verify_failed`, `looping`, `too_short`, `too_long`, `non_english`, `unbalanced_think_tags`, `empty_assistant`, `turn_structure`, `invalid`, `teacher_error`); `train_final.by_domain` covering all four domains; non-zero token share.
 
 - [ ] **Step 4: Verify every accepted record and its image refs**
 
