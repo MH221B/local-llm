@@ -104,7 +104,7 @@ validate before writing.
         {"type": "text",  "text": "Which bar is tallest?"},
         {"type": "image", "sha256": "ab12..."}
     ]},
-    {"role": "assistant", "content": " thinkingThe blue bar reaches 40...</think>\n\nThe blue bar."}
+    {"role": "assistant", "content": "<think>The blue bar reaches 40...</think>\n\nThe blue bar."}
   ],
   "tools": null,
   "images": [
@@ -192,7 +192,7 @@ Decisions:
   assistant turns only — it never removes an interior turn, because interior turns are
   the context.
 
-**Per-turn reasoning.** A multi-turn trajectory can carry a ` thinking` block on each
+**Per-turn reasoning.** A multi-turn trajectory can carry a `<think>` block on each
 assistant turn. Qwen3's template stores only the blocks after the latest non-tool user
 turn, silently pruning earlier ones. That pruning is the template's job and is left to
 it: reasoning is stored verbatim per turn (§5), and the render gate (§11.2) reports which
