@@ -123,6 +123,12 @@ configs are the eval side for that pass.
 
 ### 7. Unit-test seeds and verifier (Task 18)
 
+MBPP seeds state the required function name and signature in the prompt — derived from the
+reference solution — because MBPP's own `prompt` field never names the function its tests
+call, which made every MBPP seed unsatisfiable (`mbpp|coding` measured **0.0**). This is why
+`verification/seeds.jsonl` must be regenerated whenever `testsets.py` changes: the prompt text
+is part of each row's cache key downstream.
+
 ```powershell
 & "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.testsets --smoke
 & "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.testsets --root datasets/qwen35-4b-sft
@@ -202,29 +208,33 @@ that are absent from `m2/cache.jsonl`.
 
 | metric | value |
 |---|---|
-| seeded | 8 accepted of 12 |
+| seeded | 10 accepted of 12 |
 | trajectories | 2 accepted of 3 |
 | simulated | 3 accepted of 3 |
-| merged | train 10, val 3, blended `pass_rate` **0.7222** |
-| `train_final.by_domain` | coding 6, roleplay 2, uncensored 1, reasoning 1 |
-| `train_final.token_share` | coding 0.859, roleplay 0.083, uncensored 0.045, reasoning 0.014 |
-| `pass_rate_by_source` | gsm8k 1.0 · smoltalk 1.0 · in-the-wild 1.0 · the_cauldron 1.0 · teacher:uncensored 1.0 · teacher:tools 1.0 · CodeFeedback 0.5 · **mbpp 0.0** |
-| trace coverage | 9 of 9 train rows carry a `<think>` block |
+| merged | train 12, val 3, blended `pass_rate` **0.8333** |
+| `train_final.by_domain` | coding 8, roleplay 2, uncensored 1, reasoning 1 |
+| `train_final.token_share` | coding 0.864, roleplay 0.080, uncensored 0.043, reasoning 0.013 |
+| `pass_rate_by_source` | gsm8k 1.0 · smoltalk 1.0 · in-the-wild 1.0 · the_cauldron 1.0 · teacher:uncensored 1.0 · teacher:tools 1.0 · **mbpp 0.6667** · CodeFeedback 0.5 |
+| trace coverage | 9 of 9 single-turn train rows carry a `<think>` block |
 
 `coding` dominates the token share because `verification/seeds.jsonl` is 100% coding and
 oracle-bearing, so read `pass_rate_by_source` rather than the blended `pass_rate` when
 setting M3 caps.
 
-The `mbpp|coding` 0.0 is the one open question: all three sampled MBPP seeds fail
-`verify_failed` (executed tests raising `NameError` for the expected function name). It is
-unresolved — the completions for those three rows predate `rejected.jsonl`, so re-running that
-pool is what will show whether the oracle is naming-strict or the model is wrong.
+`mbpp|coding` first measured **0.0** and that was a false positive by construction: MBPP's
+`prompt` field is a vague one-liner while its tests call the reference function by *name and
+arity*, which the seed never stated — two of three sampled rows had implemented the correct
+behaviour under a self-chosen name. `testsets.py` now derives the signature from the reference
+solution and states it in the prompt; MBPP sits at **0.6667**, and the one remaining drop is
+genuine (`AssertionError`: the model returned the right elements in the wrong container type).
+Regenerating `verification/seeds.jsonl` is required for that fix, because the prompt text is
+part of each row's cache key.
 
-Drop reasons this run (every drop is now written to `m2/rejected.jsonl` with its completion):
+Drop reasons this run (every drop is written to `m2/rejected.jsonl` with its completion):
 
 | reason | stage | rows |
 |---|---|---|
-| `verify_failed` | seeded | 3 (all `mbpp\|coding`) |
+| `verify_failed` | seeded | 1 (`mbpp-473`, genuine) |
 | `teacher_error` | seeded | 1 (a cached skip: `codefeedback-239`) |
 | `turn_structure` | trajectory | 1 |
 

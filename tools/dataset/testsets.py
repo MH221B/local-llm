@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.request
 from pathlib import Path
@@ -33,19 +34,51 @@ APPS_URL = ("https://huggingface.co/datasets/codeparrot/apps/"
             "resolve/main/train.jsonl")
 
 
+_SIGNATURE = re.compile(r"^\s*def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)", re.M)
+
+
+def reference_signature(code: str) -> tuple[str, str] | None:
+    """`("sub_list", "sub_list(list1, list2)")` from MBPP's reference solution, or None.
+
+    MBPP's `prompt` is a vague one-liner ("Write a function to subtract two lists
+    element-wise") while its tests call the reference function *by name and arity*. Without
+    stating the interface the oracle is unsatisfiable: measured on the first M2 run, all
+    three sampled MBPP seeds failed `verify_failed` and two of them had implemented the
+    right behaviour under a self-chosen name (`subtract_lists`, `top_n`).
+    """
+    if not isinstance(code, str):
+        return None
+    match = _SIGNATURE.search(code)
+    if not match:
+        return None
+    name = match.group(1)
+    params = re.sub(r"\s+", " ", match.group(2)).strip().rstrip(",")
+    return name, f"{name}({params})"
+
+
 def mbpp_prompt(row: dict, index: int) -> Prompt | None:
     prompt, tests = row.get("prompt"), row.get("test_list")
     if not prompt or not isinstance(tests, list) or not tests:
         return None
+    verify = {"type": "python_tests",
+              "setup": "\n".join(row.get("test_imports") or []),
+              "tests": tests}
+    text = prompt
+    signature = reference_signature(row.get("code"))
+    if signature:
+        name, rendered = signature
+        text = (f"{prompt}\n\nName the function `{name}` and use exactly this signature: "
+                f"`def {rendered}:`")
+        # The verifier uses it to pick the block that defines the function rather than the
+        # usage example a coding answer usually ends with.
+        verify["name"] = name
     return Prompt(
         id=f"mbpp-{row.get('task_id', index)}",
         domain="coding",
         origin="prebuilt",
         source={"name": MBPP["dataset"], "config": MBPP["config"], "row": index},
-        messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
-        verify={"type": "python_tests",
-                "setup": "\n".join(row.get("test_imports") or []),
-                "tests": tests},
+        messages=[{"role": "user", "content": [{"type": "text", "text": text}]}],
+        verify=verify,
         meta={"difficulty": row.get("difficulty")},
     )
 
@@ -117,14 +150,19 @@ def harvest(rows, mapper, cap: int, label: str) -> list[Prompt]:
 
 
 def smoke() -> int:
-    mb = mbpp_prompt({"task_id": 2, "prompt": "Write add(a, b).", "test_imports": [],
+    mb = mbpp_prompt({"task_id": 2, "prompt": "Write a function that adds two numbers.",
+                      "code": "def add(a, b):\n    return a + b", "test_imports": [],
                       "test_list": ["assert add(1, 2) == 3"]}, 0)
+    bare = mbpp_prompt({"task_id": 3, "prompt": "Write something.", "test_list": ["assert f()"]}, 0)
     apps = apps_prompt({"problem_id": 1, "question": "Read two ints and print the sum.",
                         "input_output": json.dumps({"inputs": ["1 2"], "outputs": ["3"]})}, 0)
+    stated = "def add(a, b):" in mb.messages[0]["content"][0]["text"]
     print("mbpp verify:", mb.verify["type"], len(mb.verify["tests"]))
+    print("mbpp states the signature:", stated, "| verify name:", mb.verify.get("name"))
+    print("row without a reference signature untouched:", "signature" not in bare.messages[0]["content"][0]["text"])
     print("apps verify:", apps.verify["type"], len(apps.verify["pairs"]))
     print("no-test row dropped:", mbpp_prompt({"prompt": "x", "test_list": []}, 0))
-    return 0
+    return 0 if (stated and mb.verify.get("name") == "add") else 1
 
 
 def main(argv: list[str] | None = None) -> int:

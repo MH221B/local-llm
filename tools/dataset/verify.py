@@ -22,16 +22,27 @@ def strip_think(text: str) -> str:
     return _THINK.sub("", text).strip()
 
 
-def extract_code(completion: str) -> str:
-    """Every fenced block, joined.
+def extract_code(completion: str, name: str | None = None) -> str:
+    """The block to execute.
 
-    A coding answer usually ends with a usage example in its own fence, so taking the
-    last block alone executes the demo without the definition. Measured: three MBPP seeds
-    failed `NameError: name 'tuple_intersection' is not defined` - names that appear only
-    in the final block.
+    Prefer the block that defines `name` (the seed states it), then the first block with a
+    module-level `def`, then the last block. Joining every block looked tempting and is
+    wrong: a trailing usage example can be a fragment with a bare `return`, so the joined
+    program dies with `SyntaxError: 'return' outside function` and hides the real reason
+    (measured on an MBPP row whose true failure was `NameError`).
     """
     blocks = [b.strip() for b in _CODE_FENCE.findall(completion)]
-    return "\n\n".join(blocks) if blocks else strip_think(completion).strip()
+    if not blocks:
+        return strip_think(completion).strip()
+    if name:
+        wanted = re.compile(rf"^\s*def\s+{re.escape(name)}\s*\(", re.M)
+        for block in blocks:
+            if wanted.search(block):
+                return block
+    for block in blocks:
+        if re.search(r"^\s*def\s+\w+\s*\(", block, re.M):
+            return block
+    return blocks[-1]
 
 
 def run_python(source: str, stdin: str = "", timeout: float = 10.0) -> tuple[bool, str]:
@@ -47,8 +58,8 @@ def run_python(source: str, stdin: str = "", timeout: float = 10.0) -> tuple[boo
 
 
 def check_python_tests(completion: str, tests: list[str], setup: str = "",
-                       timeout: float = 10.0) -> tuple[bool, str]:
-    body = "\n".join([setup, extract_code(completion), *tests])
+                       timeout: float = 10.0, name: str | None = None) -> tuple[bool, str]:
+    body = "\n".join([setup, extract_code(completion, name), *tests])
     ok, info = run_python(body, timeout=timeout)
     return (True, "") if ok else (False, info)
 
@@ -113,7 +124,8 @@ def check_record(verify: dict | None, completion: str) -> tuple[bool, str]:
     vtype = verify.get("type")
     if vtype == "python_tests":
         return check_python_tests(completion, verify.get("tests") or [],
-                                  setup=verify.get("setup") or "")
+                                  setup=verify.get("setup") or "",
+                                  name=verify.get("name"))
     if vtype == "python_io":
         return check_python_io(completion, verify.get("pairs") or [])
     if vtype == "answer_match":
@@ -201,6 +213,24 @@ if __name__ == "__main__":
     print("answer mismatch:", check_answer("The answer is 5.", "4"))
     print("prose numeric answer:", check_answer("James made **$126** from selling all the water.", "126"))
     print("prose wrong number:", check_answer("James made **$105** from selling all the water.", "126"))
+
+    # Regression: a coding answer that ends with a fragment. Joining every fence makes the
+    # program invalid (`return` outside a function) and hides the real failure.
+    fragmented = ("```python\ndef top_n(items, n):\n    return sorted(items)[-n:]\n```\n\n"
+                  "```python\nprint(top_n([3, 1], 1))\n```\n\n"
+                  "```python\nfor x in items:\n    return x\n```")
+    blocks = _CODE_FENCE.findall(fragmented)
+    joined_invalid = False
+    try:
+        compile("\n\n".join(blocks), "<joined>", "exec")
+    except SyntaxError:
+        joined_invalid = True
+    picked = extract_code(fragmented, "larg_nnum")
+    print("joining every fence is invalid:", joined_invalid)
+    print("picks the defining block:", picked.startswith("def top_n"))
+    print("picks the named block when present:",
+          extract_code("```python\ndef a():\n    return 1\n```\n\n```python\ndef sub_list(x):\n    return x\n```",
+                       "sub_list").startswith("def sub_list"))
 
     good = Trajectory(
         id="t1", domain="coding", origin="teacher", source={"name": "s"},

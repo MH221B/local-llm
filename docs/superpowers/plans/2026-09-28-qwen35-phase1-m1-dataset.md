@@ -2913,6 +2913,8 @@ git commit -m "feat(dataset): section 8 vision holdout exporter"
 
 ### Task 18: Unit-test distillation seeds and verifier
 
+> **Superseded in M2 (Task 15): MBPP seeds now state the interface, and `verify.extract_code` takes a name.** MBPP's `prompt` is a vague one-liner while its tests call the reference function by *name and arity*, so every MBPP seed was unsatisfiable: measured `mbpp|coding` at **0.0**, with two of three sampled rows having implemented the correct behaviour under a self-chosen name. `testsets.reference_signature` now reads the reference solution's `def` line, appends *"Name the function `X` and use exactly this signature: `def X(a, b):`"* to the prompt, and stores `verify["name"]`. `verify.extract_code(completion, name)` prefers the block defining that name (else the first block with a module-level `def`, else the last) — joining every fence is invalid when a trailing snippet has a bare `return`. The code below records what M1 shipped.
+
 **Files:**
 - Create: `tools/dataset/testsets.py`
 - Create: `tools/dataset/verify.py`
