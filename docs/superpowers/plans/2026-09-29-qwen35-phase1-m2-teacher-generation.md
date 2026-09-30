@@ -2665,7 +2665,7 @@ Expected: `status ok`; then the Task 2 smoke lines.
 ```
 Expected: `magpie prompts: 40 -> ...`, `seeded: accepted N of M`, `trajectories: accepted N of M`, `simulated: accepted N of M`, `merged: train X, val Y, pass_rate 0.xx`, with `X >= 400`. Because every call is cached, a re-run prints the same numbers.
 
-> **Actual M2 run used smaller flags + no token cap (decided during Task 15).** The teacher emits a long reasoning trace per call (~4k tokens, measured ~5 min/call on the local iGPU), so the milestone run was shrunk to `--limit 100 --val-limit 25 --multi-limit 20 --sim-limit 8 --magpie-limit 10`, and `TeacherClient.complete` no longer sends `max_tokens` — a 4096 cap truncated rows mid-reasoning with no answer at all. The cache was cleared before this run.
+> **The local M2 run is a pipeline smoke, not the corpus (decided during Task 15).** The teacher emits a long reasoning trace per call (~4k tokens, measured ~5 min/call on the local iGPU), so a full local run is tens of hours for no added signal: the point locally is to prove every shape, verifier, filter, merge and manifest step fires end-to-end. The acceptance run therefore uses `--limit 5 --val-limit 2 --multi-limit 3 --sim-limit 2 --magpie-limit 3` (≈40 calls). The ~25k corpus is M3 on Colab vLLM, so Task 15's `X >= 400` expectation is a scale-out target, not a local gate. Separately, `TeacherClient.complete` no longer sends `max_tokens` — a 4096 cap truncated rows mid-reasoning with no answer at all. The cache was cleared before this run.
 
 Two scale notes the flags understate:
 
