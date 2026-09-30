@@ -16,7 +16,6 @@ MIN_PROMPT_TOKENS = 4
 MAX_PROMPT_TOKENS = 8192
 MIN_ANSWER_TOKENS = 16
 MAX_ANSWER_TOKENS = 16384
-LOOP_RATIO_MAX = 0.05
 
 # The student template stores the CoT as angle-bracket delimited tags, read from the
 # GGUF's own chat template in Task 15 rather than assumed: the template writes
@@ -57,29 +56,20 @@ def prompt_reject_reason(text: str, tokens: int) -> str | None:
 MIN_TURN_TOKENS = 4
 
 
-def _loop_ratio(text: str) -> float:
-    """Degenerate-repeat ratio, scored on the answer span only.
-
-    The reasoning trace is excluded on purpose: it repeats itself legitimately. Measured
-    on a coding row (correct answer, `All tests passed!`), the trace scored 0.058 - driven
-    by a run of the word `zebra` the model used as its own test fixture - while the answer
-    scored 0.045. Only the answer reaches the student's response slot, so only the answer
-    is scored. The trace is a different distribution: re-printed code while iterating.
-
-    ponytail: the trace is left unchecked, so a severely looping trace can still ship.
-    Legitimate traces measured ~0.06; if M3's reward filter does not catch degenerate
-    traces, add a trace guard at a much higher bar (e.g. 0.25), not at LOOP_RATIO_MAX.
-    """
-    if THINK_CLOSE in text:
-        _, answer = text.split(THINK_CLOSE, 1)
-    else:
-        answer = text
-    return textutil.repeating_ngram_ratio(answer)
-
-
 def response_reject_reason(text: str, tokens: int,
                            min_tokens: int = MIN_ANSWER_TOKENS) -> str | None:
-    """Response-side predicates on one assistant span (M2, spec sections 10.1, 11.3)."""
+    """Structural response-side predicates on one assistant span (spec 10.1, 11.3).
+
+    The response-quality predicates were removed during M2 Task 15. Once the teacher's
+    reasoning trace is stored inside `content`, each one false-fires on legitimate
+    reasoning: refusal markers are quoted in the trace, the trace echoes its own test
+    fixtures (so the n-gram check trips), and a trace or answer may legitimately carry
+    non-Latin script. Measured: 2 of the first 3 seeded rows were dropped as false
+    positives. Decided: accept those rows outright; M3's reward filter owns response
+    quality. What remains is structure only, which cannot false-fire.
+
+    ponytail: M2 ships no response-quality gate at all. M3's reward filter is the gate.
+    """
     if not text.strip():
         return "empty_assistant"
     if text.count(THINK_OPEN) != text.count(THINK_CLOSE):
@@ -88,10 +78,6 @@ def response_reject_reason(text: str, tokens: int,
         return "too_short"
     if tokens > MAX_ANSWER_TOKENS:
         return "too_long"
-    if _loop_ratio(text) > LOOP_RATIO_MAX:
-        return "looping"
-    if len(_NON_ENGLISH.findall(text)) / max(1, len(text)) > NON_ENGLISH_RATIO_MAX:
-        return "non_english"
     return None
 
 
@@ -148,20 +134,17 @@ if __name__ == "__main__":
     print("clean:", example_reject_reason(mk("A clear worked answer.")))
     print("unbalanced:", example_reject_reason(mk("<think>reasoning without a close tag")))
     print("short:", example_reject_reason(mk("ok", tokens=3)))
-    print("loop:", example_reject_reason(mk(" ".join(["a b c d e f g h"] * 30))))
-    # Regression: the trace drafts the answer, so the joined text repeats. Scored per
-    # span this is clean; scored joined it would trip `looping`.
-    drafted = " ".join(f"word{i}" for i in range(20))
-    print("draft-echo not looping:",
-          example_reject_reason(mk(f"<think>Draft: {drafted}</think>\n\n{drafted}")))
-    # Regression: a trace legitimately repeats itself (echoed test fixture, re-printed
-    # code). Only the answer span is scored, so this row is kept.
+    print("long:", example_reject_reason(mk("a b c", tokens=99999)))
+    # The removed quality predicates must no longer drop anything. Every measured false
+    # positive from Task 15 is pinned here: a quoted refusal, an echoed test fixture, a
+    # genuinely repeating answer, and a non-Latin answer.
+    print("refusal text accepted:", example_reject_reason(mk("I cannot help with that request.")))
     fixture = " ".join(["zebra"] * 40)
-    print("repetitive trace, clean answer kept:",
+    print("repetitive trace accepted:",
           example_reject_reason(mk(f"<think>test with {fixture}</think>\n\nThe counter works.")))
-    print("repeating answer still looping:",
-          example_reject_reason(mk(f"<think>short plan</think>\n\n{' '.join(['a b c d e f g h'] * 30)}")))
-    print("non-english:", example_reject_reason(mk("这是一段中文回答，用于测试语言过滤。")))
+    print("repeating answer accepted:",
+          example_reject_reason(mk(" ".join(["a b c d e f g h"] * 30))))
+    print("non-english accepted:", example_reject_reason(mk("这是一段中文回答，用于测试语言过滤。")))
 
     good = Trajectory(id="t1", domain="roleplay", origin="teacher", source={"name": "s"},
                       messages=[{"role": "user", "content": "hi"},
