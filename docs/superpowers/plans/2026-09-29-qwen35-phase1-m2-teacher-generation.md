@@ -1482,6 +1482,8 @@ git commit -m "feat(dataset): turn and trajectory verification"
 ### Task 9: Per-turn response filters (spec §10.1)
 
 > **Refusal predicate removed (decided during Task 15).** Once the reasoning trace is stored inside `content` (see the Task 2 note), substring refusal matching false-fired on incidental phrases in the reasoning — measured: a coding row was rejected because its reasoning quoted the example `"I want to go but I can't because I'm busy"`. Per the user's instruction the `refusal` predicate and `REFUSAL_MARKERS` were deleted outright. The response filters now cover empty / unbalanced-think / too_short / too_long / looping / non_english only.
+>
+> **Loop check scores each span separately (same cause).** Storing the trace in `content` also broke the n-gram loop check: reasoning models draft the answer inside the trace, so scoring the concatenation counts the draft as a repeat. Measured: a row whose trace and answer each scored `0.0` scored `0.070` joined (threshold `0.05`) and was dropped as `looping`. `filters._loop_ratio` now takes `max(ratio(trace), ratio(answer))`, with a smoke regression for the draft-echo case and for a genuinely repeating answer.
 
 **Files:**
 - Modify: `tools/dataset/filters.py`
