@@ -2769,12 +2769,17 @@ prompt mix; M2's accepted teacher completions will shift the final one.
 
 - [ ] **Step 7: Record the rebuild instructions (spec section 3)**
 
-Write `datasets/qwen35-4b-sft/README.md` containing the commands above (seeds, testsets,
+Write `docs/qwen35-4b-sft-rebuild.md` containing the commands above (seeds, testsets,
 pipeline, contaminate, visionholdout) plus the post-M2 ones (verify usage, calibrate),
 the manifest's caveats, and a note that `raw/` is empty by design: ingestion streams from
 the Hub and materialises images straight into `images/`. `prompts/` plus
 `verification/seeds.jsonl` are M2's inputs; the teacher-written `train.jsonl` /
 `val.jsonl` are M2's outputs.
+
+**Not** `datasets/qwen35-4b-sft/README.md`: `.gitignore` excludes `datasets/` as
+rebuildable pipeline output, so a README written there can never be committed. The
+rebuild guide is documentation about the dataset, not part of it, so it lives in `docs/`
+with the spec and this plan. The dataset directory itself stays disposable.
 
 - [ ] **Step 8: Commit**
 
