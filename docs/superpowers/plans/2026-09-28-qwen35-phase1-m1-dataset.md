@@ -2505,7 +2505,7 @@ git commit -m "feat(dataset): llama-server client and render gate"
 - Create: `tools/dataset/contaminate.py`
 - Create: `tools/dataset/calibrate.py`
 
-- [ ] **Step 1: Start the student model server for the render gate**
+- [x] **Step 1: Start the student model server for the render gate**
 
 ```powershell
 Start-Process -FilePath "C:\Users\tnmh\projects\local-llm\llama-cpp\llama-server.exe" `
@@ -2524,7 +2524,7 @@ Get-Item tools/dataset/student.jinja | Select-Object Length
 ```
 Expected: a non-zero file length.
 
-- [ ] **Step 2: Run the render gate**
+- [x] **Step 2: Run the render gate**
 
 ```powershell
 & "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.render --dataset datasets/qwen35-4b-sft-smoke/prompts/train.jsonl --template tools/dataset/student.jinja
@@ -2538,7 +2538,7 @@ gated on both checks; if the probe fails, thinking does not open, or the verdict
 unbalanced, reconcile the tag constants (`THINK_OPEN` / `THINK_CLOSE` in `filters.py` and
 `render.py`) with the template rather than continuing.
 
-- [ ] **Step 3: Write `tools/dataset/contaminate.py`**
+- [x] **Step 3: Write `tools/dataset/contaminate.py`**
 
 ```python
 """Eval-set disjointness guard (spec section 11.1). Non-negotiable."""
@@ -2659,7 +2659,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-- [ ] **Step 4: Write `tools/dataset/calibrate.py`**
+- [x] **Step 4: Write `tools/dataset/calibrate.py`**
 
 ```python
 """Carve calibration chunks for Phase 3's llama-imatrix (spec section 3)."""
@@ -2723,7 +2723,7 @@ if __name__ == "__main__":
 Calibration needs completed answers, so it runs after M2 on the teacher-written
 `train.jsonl`; the module is built here so Phase 3 is not blocked later.
 
-- [ ] **Step 5: Full M1 run**
+- [x] **Step 5: Full M1 run**
 
 Only after Step 2's render verdict is balanced. Wire the exact token counter in first by
 adding to the top of `run()` in `pipeline.py`, immediately after `store = ImageStore(...)`:
@@ -2757,7 +2757,7 @@ Run (from the repo root):
 Expected: `prompts train 3000, val 200`; `collisions: 0`. (Calibration and the
 teacher-written `train.jsonl` arrive with M2.)
 
-- [ ] **Step 6: Accept against the spec**
+- [x] **Step 6: Accept against the spec**
 
 Check the manifest against spec §4 and §12:
 ```powershell
@@ -2769,7 +2769,7 @@ before the trim to `--target-train` (uncensored comes from Task 10's seeds);
 image-bearing share at or near **0.12**; token counter reported as `exact`. This is the
 prompt mix; M2's accepted teacher completions will shift the final one.
 
-- [ ] **Step 7: Record the rebuild instructions (spec section 3)**
+- [x] **Step 7: Record the rebuild instructions (spec section 3)**
 
 Write `docs/qwen35-4b-sft-rebuild.md` containing the commands above (seeds, testsets,
 pipeline, contaminate, visionholdout) plus the post-M2 ones (verify usage, calibrate),
@@ -2783,7 +2783,7 @@ rebuildable pipeline output, so a README written there can never be committed. T
 rebuild guide is documentation about the dataset, not part of it, so it lives in `docs/`
 with the spec and this plan. The dataset directory itself stays disposable.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 git add tools/dataset/contaminate.py tools/dataset/calibrate.py tools/dataset/pipeline.py
