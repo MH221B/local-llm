@@ -6,6 +6,7 @@ sandbox — run generation and verification on a disposable environment/profile.
 """
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -93,7 +94,74 @@ def check_record(verify: dict | None, completion: str) -> tuple[bool, str]:
     return False, f"unknown verify type {vtype!r}"
 
 
+_JSON_ERROR = re.compile(r'"error"\s*:')
+# Known limitation: a legitimate tool result may carry an `"error"` key (a well-formed
+# API error response is still a valid observation). Measured on ToolACE, ~1.6% of tool
+# results match and are dropped as "error-laden". Left as specified; the rate shows up in
+# the trajectory drops, and M3 can narrow the pattern to a top-level error field.
+
+
+def check_turns(trajectory) -> list[str]:
+    """Turn-level structural checks (spec section 10.2). Empty list means valid."""
+    from .canonical import declared_tool_names
+    problems: list[str] = []
+    names = declared_tool_names(trajectory.tools) if trajectory.tools else None
+    calls: dict[str, int] = {}
+    answered: set[str] = set()
+    for i, m in enumerate(trajectory.messages):
+        role = m.get("role")
+        if role == "assistant":
+            tcs = m.get("tool_calls") or []
+            if not (strip_think(str(m.get("content") or "")).strip() or tcs):
+                problems.append(f"empty assistant turn at {i}")
+            for tc in tcs:
+                cid = tc.get("id")
+                fn = tc.get("function") or {}
+                if not cid:
+                    problems.append(f"tool_call without id at {i}")
+                    continue
+                if names is not None and fn.get("name") not in names:
+                    problems.append(f"undeclared tool {fn.get('name')!r} at {i}")
+                args = fn.get("arguments")
+                if isinstance(args, str):
+                    try:
+                        json.loads(args)
+                    except json.JSONDecodeError:
+                        problems.append(f"tool_call arguments not JSON at {i}")
+                calls[cid] = i
+        elif role == "tool":
+            cid = m.get("tool_call_id")
+            if cid not in calls:
+                problems.append(f"tool result without a preceding call at {i}")
+            else:
+                answered.add(cid)
+            text = str(m.get("content") or "")
+            if text.strip().lower().startswith("error:") or _JSON_ERROR.search(text):
+                problems.append(f"error-laden tool result at {i}")
+    for cid, idx in calls.items():
+        if cid not in answered:
+            problems.append(f"call {cid!r} at {idx} has no tool result")
+    return problems
+
+
+def check_trajectory(verify_spec: dict | None, trajectory) -> tuple[bool, str]:
+    """Trajectory-level check: structure first, then the final visible answer (spec 10.1).
+
+    `think` blocks are stripped before any oracle runs, so reasoning cannot satisfy a test
+    by accident (spec section 10.1).
+    """
+    problems = check_turns(trajectory)
+    if problems:
+        return False, problems[0]
+    if verify_spec is not None:
+        from .canonical import final_assistant_text
+        return check_record(verify_spec, final_assistant_text(trajectory.messages))
+    return True, ""
+
+
 if __name__ == "__main__":
+    from .canonical import Trajectory
+
     ok, _ = check_python_tests("def add(a, b):\n    return a + b",
                                ["assert add(1, 2) == 3"])
     bad, why_bad = check_python_tests("def add(a, b):\n    return a - b",
@@ -103,3 +171,28 @@ if __name__ == "__main__":
     print("io positive:", io_ok)
     print("answer match:", check_answer("<think>\n4\n</think>\n\n\\boxed{4}", "4"))
     print("answer mismatch:", check_answer("The answer is 5.", "4"))
+
+    good = Trajectory(
+        id="t1", domain="coding", origin="teacher", source={"name": "s"},
+        messages=[
+            {"role": "user", "content": "Book a table."},
+            {"role": "assistant", "content": "<think>need the tool</think>",
+             "tool_calls": [{"id": "c1", "type": "function",
+                             "function": {"name": "book", "arguments": "{\"n\": 2}"}}]},
+            {"role": "tool", "content": "{\"ok\": true}", "tool_call_id": "c1"},
+            {"role": "assistant", "content": "Booked."},
+        ],
+        tools=[{"type": "function", "function": {"name": "book"}}])
+    orphan = Trajectory(
+        id="t2", domain="coding", origin="teacher", source={"name": "s"},
+        messages=[
+            {"role": "user", "content": "x"},
+            {"role": "assistant", "content": "y",
+             "tool_calls": [{"id": "c1", "type": "function",
+                             "function": {"name": "nope", "arguments": "{bad"}}]},
+            {"role": "assistant", "content": "z"},
+        ],
+        tools=[{"type": "function", "function": {"name": "book"}}])
+    print("turns good:", check_turns(good))
+    print("turns bad:", len(check_turns(orphan)), "problems")
+    print("traj verify pass:", check_trajectory({"type": "answer_match", "gold": "Booked."}, good))
