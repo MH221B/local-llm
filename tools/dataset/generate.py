@@ -32,8 +32,42 @@ def _source_key(record) -> str:
     return f"{record.source.get('name', '?')}|{record.domain}"
 
 
+def _record_reject(root: Path, *, stage: str, reason: str, detail=None,
+                   pool: str | None = None, id: str | None = None,
+                   record: dict | None = None) -> None:
+    """Persist a rejected item, with its completion, to `m2/rejected.jsonl`.
+
+    Drops used to be counted only, and `verify_failed` kept its reason but not the
+    completion, so a false-positive oracle verdict was indistinguishable from a bad
+    generation (measured: three MBPP seeds and one GSM8K row were dropped wrongly and
+    could not be inspected afterwards). Appended per row so a crash keeps what ran.
+    """
+    path = root / "m2" / "rejected.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = {"stage": stage, "reason": reason, "detail": detail, "pool": pool,
+            "id": id, "record": record}
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+
+def _completion_example(prompt, content: str, tool_calls: list) -> Example:
+    assistant = {"role": "assistant", "content": content}
+    if tool_calls:
+        assistant["tool_calls"] = tool_calls
+    tokens = textutil.count_tokens(content) + (
+        textutil.count_tokens(json.dumps(tool_calls, ensure_ascii=False)) if tool_calls else 0)
+    return Example(id=prompt.id, domain=prompt.domain, origin="teacher",
+                   source=prompt.source, messages=prompt.messages + [assistant],
+                   images=prompt.images, tools=prompt.tools,
+                   tokens=tokens, meta=dict(prompt.meta))
+
+
 def generate_one(prompt, client, cache, *, store, thinking: bool) -> dict:
-    """One cached single-turn completion, verified and filtered. Cached value is the verdict."""
+    """One cached single-turn completion, verified and filtered. Cached value is the verdict.
+
+    Every verdict carries its `example`, `verify_failed` included: a drop whose completion
+    is not stored cannot be audited.
+    """
     key = gencache.prefix_key(prompt.messages, kind=f"single:{prompt.id}")
     cached = cache.get(key)
     if cached is not None:
@@ -42,28 +76,21 @@ def generate_one(prompt, client, cache, *, store, thinking: bool) -> dict:
                           thinking=thinking, seed=_seed(key))
     content = msg.get("content") or ""
     tool_calls = msg.get("tool_calls") or []
+    ex = _completion_example(prompt, content, tool_calls)
     if prompt.verify:
         ok, why = verify.check_record(prompt.verify, content)
         if not ok:
-            cached = {"accepted": False, "reason": "verify_failed", "detail": why}
+            cached = {"accepted": False, "reason": "verify_failed", "detail": why,
+                      "example": ex.to_dict()}
             cache.put(key, cached)
             return cached
-    assistant = {"role": "assistant", "content": content}
-    if tool_calls:
-        assistant["tool_calls"] = tool_calls
-    tokens = textutil.count_tokens(content) + (
-        textutil.count_tokens(json.dumps(tool_calls, ensure_ascii=False)) if tool_calls else 0)
-    ex = Example(id=prompt.id, domain=prompt.domain, origin="teacher",
-                 source=prompt.source, messages=prompt.messages + [assistant],
-                 images=prompt.images, tools=prompt.tools,
-                 tokens=tokens, meta=dict(prompt.meta))
     reason = filters.example_reject_reason(ex)
     cached = {"accepted": reason is None, "reason": reason, "example": ex.to_dict()}
     cache.put(key, cached)
     return cached
 
 
-def _run_pool(pool: Path, limit: int | None, client, cache, *, store, thinking, stats):
+def _run_pool(pool: Path, limit: int | None, client, cache, *, root, store, thinking, stats):
     records = [prompt_from_dict(r) for r in iter_jsonl(pool)]
     if limit:
         records = split.downsample(records, limit)
@@ -77,6 +104,8 @@ def _run_pool(pool: Path, limit: int | None, client, cache, *, store, thinking, 
         except TeacherError as exc:
             stats["drops"]["teacher_error"] += 1
             print(f"  teacher error on {prompt.id}: {exc}")
+            _record_reject(root, stage="seeded", reason="teacher_error", detail=str(exc),
+                           pool=pool.name, id=prompt.id)
             continue
         if verdict["accepted"]:
             out.append(canonical.example_from_dict(verdict["example"]))
@@ -85,6 +114,9 @@ def _run_pool(pool: Path, limit: int | None, client, cache, *, store, thinking, 
             stats["accepted_by_source"][key] += 1
         else:
             stats["drops"][verdict["reason"]] += 1
+            _record_reject(root, stage="seeded", reason=verdict["reason"],
+                           detail=verdict.get("detail"), pool=pool.name, id=prompt.id,
+                           record=verdict.get("example"))
     return out
 
 
@@ -98,13 +130,13 @@ def run_seeded(*, root: Path, client, cache, limit: int | None, val_limit: int |
     for rel in TRAIN_POOLS:
         path = root / rel
         if path.exists():
-            train.extend(_run_pool(path, limit, client, cache, store=store,
+            train.extend(_run_pool(path, limit, client, cache, root=root, store=store,
                                    thinking=thinking, stats=stats))
     val: list[Example] = []
     for rel in VAL_POOLS:
         path = root / rel
         if path.exists():
-            val.extend(_run_pool(path, val_limit, client, cache, store=store,
+            val.extend(_run_pool(path, val_limit, client, cache, root=root, store=store,
                                  thinking=thinking, stats=stats))
     canonical.write_jsonl(root / "m2" / "single.jsonl", train)
     canonical.write_jsonl(root / "m2" / "val.jsonl", val)
@@ -113,21 +145,22 @@ def run_seeded(*, root: Path, client, cache, limit: int | None, val_limit: int |
     return stats
 
 
-def _accept_trajectory(traj, stats) -> bool:
-    """Validate, verify, and filter one trajectory; record the drop reason."""
+def _trajectory_reject(traj) -> tuple[str | None, str | None]:
+    """Validate, verify, and filter one trajectory. Returns `(reason, detail)` or `(None, None)`.
+
+    Separate from the accept path so a dropped trajectory can be written to
+    `m2/rejected.jsonl` with its reason instead of only being counted.
+    """
     problems = canonical.validate_trajectory(traj)
     if problems:
-        stats["drops"]["invalid"] += 1
-        return False
-    ok, _ = verify.check_trajectory(traj.verify, traj)
+        return "invalid", problems[0]
+    ok, why = verify.check_trajectory(traj.verify, traj)
     if not ok:
-        stats["drops"]["verify_failed"] += 1
-        return False
+        return "verify_failed", why
     reason = filters.trajectory_reject_reason(traj)
     if reason:
-        stats["drops"][reason.split(":")[-1].strip()] += 1
-        return False
-    return True
+        return reason.split(":")[-1].strip(), reason
+    return None, None
 
 
 def _traj_stats() -> dict:
@@ -154,11 +187,20 @@ def run_trajectory(*, root: Path, client, cache, limit: int | None, thinking: bo
         except TeacherError as exc:
             stats["drops"]["teacher_error"] += 1
             print(f"  teacher error on {prompt.id}: {exc}")
+            _record_reject(root, stage="trajectory", reason="teacher_error", detail=str(exc),
+                           pool="prompts/trajectories.jsonl", id=prompt.id)
             continue
         if traj is None:
             stats["drops"]["turn_structure"] += 1
+            _record_reject(root, stage="trajectory", reason="turn_structure",
+                           pool="prompts/trajectories.jsonl", id=prompt.id)
             continue
-        if not _accept_trajectory(traj, stats):
+        reason, detail = _trajectory_reject(traj)
+        if reason:
+            stats["drops"][reason] += 1
+            _record_reject(root, stage="trajectory", reason=reason, detail=detail,
+                           pool="prompts/trajectories.jsonl", id=prompt.id,
+                           record=traj.to_dict())
             continue
         out.append(traj)
         stats["accepted"] += 1
@@ -198,11 +240,20 @@ def run_simulated(*, root: Path, client, cache, limit: int | None, thinking: boo
         except TeacherError as exc:
             stats["drops"]["teacher_error"] += 1
             print(f"  teacher error on {seed.id}: {exc}")
+            _record_reject(root, stage="simulated", reason="teacher_error", detail=str(exc),
+                           pool="prompts/trajectories.jsonl", id=f"sim-{seed.id}")
             continue
         if traj is None:
             stats["drops"]["turn_structure"] += 1
+            _record_reject(root, stage="simulated", reason="turn_structure",
+                           pool="prompts/trajectories.jsonl", id=f"sim-{seed.id}")
             continue
-        if not _accept_trajectory(traj, stats):
+        reason, detail = _trajectory_reject(traj)
+        if reason:
+            stats["drops"][reason] += 1
+            _record_reject(root, stage="simulated", reason=reason, detail=detail,
+                           pool="prompts/trajectories.jsonl", id=f"sim-{seed.id}",
+                           record=traj.to_dict())
             continue
         out.append(traj)
         stats["accepted"] += 1
@@ -228,7 +279,7 @@ def _dump_stats(path: Path, stats: dict) -> None:
 def run_merge(*, root: Path) -> dict:
     # Training rows are Examples: `example_from_dict` is the right loader for all three
     # shards, including the trajectory ones. A `Trajectory`'s `verify` spec is a
-    # generation-time filter (`check_trajectory` already ran in `_accept_trajectory`) and
+    # generation-time filter (`check_trajectory` already ran in `_trajectory_reject`) and
     # is deliberately not carried into the written row — `Example.to_dict` has no
     # `verify` field. If a downstream stage ever needs to re-run an oracle, it must read
     # the originating prompt, not train.jsonl.
@@ -283,9 +334,15 @@ def smoke() -> int:
 
     tmp = Path(tempfile.mkdtemp())
     (tmp / "prompts").mkdir(parents=True, exist_ok=True)
-    canonical.write_jsonl(tmp / "prompts" / "train.jsonl", [Prompt(
-        id="p1", domain="reasoning", origin="prebuilt", source={"name": "smoke"},
-        messages=[{"role": "user", "content": [{"type": "text", "text": "What is 2+2?"}]}])])
+    canonical.write_jsonl(tmp / "prompts" / "train.jsonl", [
+        Prompt(id="p1", domain="reasoning", origin="prebuilt", source={"name": "smoke"},
+               messages=[{"role": "user", "content": [{"type": "text", "text": "What is 2+2?"}]}]),
+        # The fake teacher never emits digits, so this one fails `answer_match` and must
+        # still land in rejected.jsonl with its completion.
+        Prompt(id="p2", domain="reasoning", origin="prebuilt", source={"name": "smoke"},
+               messages=[{"role": "user", "content": [{"type": "text", "text": "What is 2+3?"}]}],
+               verify={"type": "answer_match", "gold": "5"}),
+    ])
 
     class FakeTeacher:
         def complete(self, messages, **kw):
@@ -297,9 +354,16 @@ def smoke() -> int:
                        val_limit=0, thinking=True)
     kept = canonical.iter_jsonl(tmp / "m2" / "single.jsonl")
     first = next(kept)
+    rejected = list(canonical.iter_jsonl(tmp / "m2" / "rejected.jsonl"))
+    has_completion = bool(rejected and rejected[0].get("record"))
     print("smoke accepted:", stats["accepted"],
           "| valid:", validate(canonical.example_from_dict(first)) == [])
-    return 0 if stats["accepted"] == 1 else 1
+    print("smoke rejected:", len(rejected),
+          "| reason:", rejected[0]["reason"] if rejected else None,
+          "| completion kept:", has_completion)
+    ok = (stats["accepted"] == 1 and len(rejected) == 1
+          and rejected[0]["reason"] == "verify_failed" and has_completion)
+    return 0 if ok else 1
 
 
 def main(argv: list[str] | None = None) -> int:

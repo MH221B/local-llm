@@ -102,7 +102,9 @@ class TeacherClient:
 
     def _post_retry(self, path: str, payload: dict) -> dict:
         last: Exception | None = None
+        attempts = 0
         for attempt in range(1, self.retries + 1):
+            attempts = attempt
             try:
                 return self._post(path, payload)
             except (urllib.error.URLError, TimeoutError, ConnectionError,
@@ -116,7 +118,7 @@ class TeacherClient:
                     break
                 if attempt < self.retries:
                     time.sleep(self.backoff * attempt)
-        raise TeacherError(f"{path} failed after {self.retries} attempts: {last}")
+        raise TeacherError(f"{path} failed after {attempts} attempt(s): {last}")
 
     def props(self) -> dict:
         return self._get("/props")
