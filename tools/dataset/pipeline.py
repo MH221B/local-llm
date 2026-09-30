@@ -46,8 +46,12 @@ def stream_source(src: sources.Source, quota: int, store: ImageStore, ctx: Ctx):
         produced += 1
 
 
-def run(*, root: Path, target_train: int, val_size: int, dry_run: bool) -> dict:
+def run(*, root: Path, target_train: int, val_size: int, dry_run: bool,
+        token_server_url: str | None = None) -> dict:
     store = ImageStore(root / "images")
+    if token_server_url:
+        from .tokenserver import LlamaServer, ServerTokenizer
+        textutil.set_tokenizer(ServerTokenizer(LlamaServer(token_server_url)))
     quotas = sources.allocate(target_train + val_size, sources.SOURCES)
     deduper = Deduper()
     drops: Counter = Counter()
@@ -68,7 +72,8 @@ def run(*, root: Path, target_train: int, val_size: int, dry_run: bool) -> dict:
                 drops["no_user_turn"] += 1
                 continue
             prompt = domains.prompt_text(prompt_rec.messages)
-            reason = deduper.check_prompt(prompt) if prompt else "empty_prompt"
+            images = canonical.image_shas(prompt_rec)
+            reason = deduper.check_prompt(prompt, images) if prompt else "empty_prompt"
             if reason:
                 drops[reason] += 1
                 continue
@@ -89,7 +94,7 @@ def run(*, root: Path, target_train: int, val_size: int, dry_run: bool) -> dict:
                 continue
             # Accepted: only now does it enter the dedup index, so rejected rows
             # cannot suppress a later viable row.
-            deduper.commit_prompt(prompt)
+            deduper.commit_prompt(prompt, images)
             deduper.commit_images(prompt_rec)
             accepted.append(prompt_rec)
             kept += 1
@@ -107,7 +112,8 @@ def run(*, root: Path, target_train: int, val_size: int, dry_run: bool) -> dict:
     seeds_kept = 0
     for prompt_rec in seed_records:
         prompt = domains.prompt_text(prompt_rec.messages)
-        reason = deduper.check_prompt(prompt) if prompt else "empty_prompt"
+        images = canonical.image_shas(prompt_rec)   # seeds are text-only; empty here
+        reason = deduper.check_prompt(prompt, images) if prompt else "empty_prompt"
         if reason:
             drops[reason] += 1
             continue
@@ -119,7 +125,7 @@ def run(*, root: Path, target_train: int, val_size: int, dry_run: bool) -> dict:
         if canonical.validate_prompt(prompt_rec):
             drops["invalid"] += 1
             continue
-        deduper.commit_prompt(prompt)
+        deduper.commit_prompt(prompt, images)
         accepted.append(prompt_rec)
         seeds_kept += 1
     if seed_records:
@@ -161,9 +167,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--target-train", type=int, default=3000)
     ap.add_argument("--val-size", type=int, default=200)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--token-server", default="http://127.0.0.1:8085")
     args = ap.parse_args(argv)
     manifest = run(root=args.root, target_train=args.target_train,
-                   val_size=args.val_size, dry_run=args.dry_run)
+                   val_size=args.val_size, dry_run=args.dry_run,
+                   token_server_url=args.token_server)
     if manifest:
         print(json.dumps(manifest["train"]["by_domain"], indent=2))
         if (manifest["run"]["train_written"] < args.target_train

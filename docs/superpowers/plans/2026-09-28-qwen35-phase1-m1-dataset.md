@@ -1646,6 +1646,8 @@ git commit -m "feat(dataset): frozen source table, quota allocator, domain rules
 """Exact and near-duplicate rejection, plus image-sha collapse."""
 from __future__ import annotations
 
+from typing import Iterable
+
 from .canonical import Example, Prompt, image_shas
 from . import textutil
 
@@ -1658,31 +1660,61 @@ class Deduper:
         self.bands = bands
         self._hashes: set[str] = set()
         self._images: set[str] = set()
-        self._band_index: dict[tuple[int, ...], list[tuple[int, ...]]] = {}
+        # band -> [(signature, image identity)]. The image identity travels with the
+        # signature so a near-duplicate hit only counts when the images also agree.
+        self._band_index: dict[tuple[int, ...], list[tuple[tuple[int, ...], str]]] = {}
 
-    def check_prompt(self, prompt: str) -> str | None:
+    @staticmethod
+    def _image_key(images: Iterable[str] = ()) -> str:
+        """Identity of a row's images; empty string for text-only rows."""
+        return ",".join(sorted(images))
+
+    @classmethod
+    def _key(cls, prompt: str, images: Iterable[str] = ()) -> str:
+        """Identity of a row: its normalised text plus the images it carries.
+
+        Image configs such as Cauldron's chart2text and screen2words reuse one
+        templated instruction ("Summarize the main components in this picture.")
+        across hundreds of rows that each carry a *different* image. Those are not
+        duplicates: they are the same question about different visual inputs, and
+        collapsing them on text alone discards almost the whole image column. So the
+        images are part of the identity, and two rows collide only when both match.
+        """
+        image_key = cls._image_key(images)
+        base = textutil.prompt_hash(prompt)
+        return base + "|" + image_key if image_key else base
+
+    def check_prompt(self, prompt: str, images: Iterable[str] = ()) -> str | None:
         """Return a rejection reason without mutating the index."""
-        if textutil.prompt_hash(prompt) in self._hashes:
+        image_key = self._image_key(images)
+        if self._key(prompt, images) in self._hashes:
             return "duplicate_prompt"
         sig = textutil.minhash(prompt)
         for band in textutil.banded(sig, self.bands):
-            for other in self._band_index.get(band, ()):
+            for other, other_images in self._band_index.get(band, ()):
+                # Text-only rows compare as before (both keys empty). A row carrying
+                # images only matches another row carrying the same images, so one
+                # instruction over many distinct images is not collapsed.
+                if other_images != image_key:
+                    continue
                 if textutil.jaccard_est(sig, other) >= self.threshold:
                     return "near_duplicate"
         return None
 
-    def commit_prompt(self, prompt: str) -> None:
+    def commit_prompt(self, prompt: str, images: Iterable[str] = ()) -> None:
         """Record a prompt the pipeline accepted (call only after filters and validate)."""
+        image_key = self._image_key(images)
         sig = textutil.minhash(prompt)
-        self._hashes.add(textutil.prompt_hash(prompt))
+        self._hashes.add(self._key(prompt, images))
         for band in textutil.banded(sig, self.bands):
-            self._band_index.setdefault(band, []).append(sig)
+            self._band_index.setdefault(band, []).append((sig, image_key))
 
     def reject_reason(self, ex: Example, prompt: str) -> str | None:
         """`check_prompt` + `commit_prompt`, for standalone use and smoke checks."""
-        reason = self.check_prompt(prompt)
+        images = image_shas(ex)
+        reason = self.check_prompt(prompt, images)
         if reason is None:
-            self.commit_prompt(prompt)
+            self.commit_prompt(prompt, images)
         return reason
 
     def has_new_images(self, ex: Example | Prompt) -> bool:
@@ -2130,7 +2162,8 @@ def run(*, root: Path, target_train: int, val_size: int, dry_run: bool) -> dict:
                 drops["no_user_turn"] += 1
                 continue
             prompt = domains.prompt_text(prompt_rec.messages)
-            reason = deduper.check_prompt(prompt) if prompt else "empty_prompt"
+            images = canonical.image_shas(prompt_rec)
+            reason = deduper.check_prompt(prompt, images) if prompt else "empty_prompt"
             if reason:
                 drops[reason] += 1
                 continue
@@ -2151,7 +2184,7 @@ def run(*, root: Path, target_train: int, val_size: int, dry_run: bool) -> dict:
                 continue
             # Accepted: only now does it enter the dedup index, so rejected rows
             # cannot suppress a later viable row.
-            deduper.commit_prompt(prompt)
+            deduper.commit_prompt(prompt, images)
             deduper.commit_images(prompt_rec)
             accepted.append(prompt_rec)
             kept += 1
@@ -2169,7 +2202,8 @@ def run(*, root: Path, target_train: int, val_size: int, dry_run: bool) -> dict:
     seeds_kept = 0
     for prompt_rec in seed_records:
         prompt = domains.prompt_text(prompt_rec.messages)
-        reason = deduper.check_prompt(prompt) if prompt else "empty_prompt"
+        images = canonical.image_shas(prompt_rec)   # seeds are text-only; empty here
+        reason = deduper.check_prompt(prompt, images) if prompt else "empty_prompt"
         if reason:
             drops[reason] += 1
             continue
@@ -2181,7 +2215,7 @@ def run(*, root: Path, target_train: int, val_size: int, dry_run: bool) -> dict:
         if canonical.validate_prompt(prompt_rec):
             drops["invalid"] += 1
             continue
-        deduper.commit_prompt(prompt)
+        deduper.commit_prompt(prompt, images)
         accepted.append(prompt_rec)
         seeds_kept += 1
     if seed_records:

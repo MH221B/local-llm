@@ -457,10 +457,18 @@ rather than papered over.
    user turn), or persist the whole trajectory for the §5.1 multi-turn sources; validate.
    Every prebuilt assistant turn is discarded here, and prebuilt tool results are kept as
    context only.
-3. **Dedup** — exact on a normalised prompt hash; near-duplicate via MinHash on
-   prompts; image-sha collapse. For trajectories the hash covers the prompt prefix (system
-   plus turns up to the first assistant turn), so two trajectories that differ only in
-   their teacher answers are not counted as duplicates.
+3. **Dedup** — exact on a normalised prompt hash **combined with the row's image
+   shas**; near-duplicate via MinHash on prompts, where a hit only counts when the image
+   identity also matches; image-sha collapse. Images are part of a row's identity because
+   Cauldron's chart2text and screen2words reuse one templated instruction ("Summarize the
+   main components in this picture.") across hundreds of rows that each carry a
+   *different* image. Those are the same question about different visual inputs, not
+   duplicates: deduping them on text alone collapsed the image column to ~3% yield and
+   held the realised image share to 0.024 against §7.6's ~0.12 target. Text-only rows
+   compare exactly as before, since both sides carry an empty image identity. For
+   trajectories the hash covers the prompt prefix (system plus turns up to the first
+   assistant turn), so two trajectories that differ only in their teacher answers are not
+   counted as duplicates.
 4. **Filter (prompt-side)** — token bounds, empty prompts, language; for trajectories,
    turn-count bounds and tool-call/tool-result structural validity. The response-side
    filters — n-gram loops, balanced think tags, refusal, length — run in M2 on teacher
