@@ -51,6 +51,16 @@ def write_manifest(path: Path, manifest: dict) -> None:
     path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def merge_manifest(path: Path, *, train: list, val: list, m2: dict) -> dict:
+    """Read the M1 manifest, add the M2 pass-rate block, and refresh the split summaries."""
+    path = Path(path)
+    manifest = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    manifest["m2"] = m2
+    manifest["train_final"] = summarise(train, "train")
+    manifest["val_final"] = summarise(val, "val")
+    return manifest
+
+
 if __name__ == "__main__":
     from .canonical import Prompt
 
