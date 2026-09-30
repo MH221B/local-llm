@@ -18,14 +18,12 @@ SOURCES = [
     ("Team-ACE/ToolACE", None, "train", "coding", "toolace", 800),
     ("HuggingFaceTB/smoltalk", "systemchats-30k", "train", "roleplay", "chat", 400),
     ("HuggingFaceTB/smoltalk", "everyday-conversations", "train", "roleplay", "chat", 400),
-    ("teknium/OpenHermes-2.5", None, "train", "roleplay", "openhermes", 400),
 ]
 
 PARSERS = {
     "hermes": trajparse.build_hermes,
     "toolace": trajparse.build_toolace,
     "chat": trajparse.build_chat,
-    "openhermes": trajparse.build_openhermes,
 }
 
 

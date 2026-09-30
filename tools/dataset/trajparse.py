@@ -280,19 +280,6 @@ def build_chat(row: dict, index: int, ctx: Ctx) -> Trajectory | None:
     )
 
 
-def build_openhermes(row: dict, index: int, ctx: Ctx) -> Trajectory | None:
-    """OpenHermes-2.5 roleplay conversations (spec section 5.1)."""
-    if row.get("category") != "roleplay":
-        return None
-    messages = _chat_messages(row.get("conversations") or [])
-    if messages is None or sum(1 for m in messages if m["role"] == "user") < 2:
-        return None
-    return Trajectory(
-        id=f"openhermes-roleplay-{index}", domain=ctx.domain, origin="prebuilt",
-        source=ctx.source(index), messages=messages, meta={"simulated": False},
-    )
-
-
 if __name__ == "__main__":
     ctx = Ctx(HERMES_DATASET, "func_calling", "coding", "apache-2.0")
     row = {
