@@ -115,6 +115,56 @@ def generate_prebuilt(prompt_traj: Trajectory, client: TeacherClient, cache,
         verify=prompt_traj.verify, meta={**prompt_traj.meta, "simulated": False})
 
 
+def generate_simulated(client: TeacherClient, cache, *, id: str, domain: str, source: dict,
+                       tools: list, first_user: str | None = None,
+                       max_tool_turns: int = MAX_TOOL_TURNS, thinking: bool = True,
+                       store=None) -> Trajectory | None:
+    """End-to-end simulated trajectory: teacher is user, agent, and tool environment."""
+    messages: list[dict] = []
+    if first_user is None:
+        key = gencache.prefix_key([{"role": "system", "content": SIM_USER_SYSTEM}],
+                                  kind=f"simuser:{id}")
+        first_user = _gen(client, cache, key,
+                          [{"role": "system", "content": SIM_USER_SYSTEM},
+                           {"role": "user", "content": "Start a request that uses a tool."}],
+                          thinking=False, max_tokens=256)["content"].strip()
+    if not first_user:
+        return None
+    messages.append({"role": "user", "content": first_user})
+
+    for _ in range(max_tool_turns):
+        key = gencache.prefix_key(messages, kind=f"simagent:{id}")
+        comp = _gen(client, cache, key, messages, store=store, tools=tools,
+                    thinking=thinking, max_tokens=1024)
+        calls = comp.get("tool_calls") or []
+        assistant = {"role": "assistant", "content": comp["content"]}
+        if not calls:
+            messages.append(assistant)
+            break
+        assistant["tool_calls"] = calls
+        messages.append(assistant)
+        for call in calls:
+            tkey = gencache.prefix_key(
+                [{"role": "system", "content": SIM_TOOL_SYSTEM},
+                 {"role": "user", "content": json.dumps(call.get("function") or {})}],
+                kind=f"simtool:{id}")
+            result = _gen(client, cache, tkey,
+                          [{"role": "system", "content": SIM_TOOL_SYSTEM},
+                           {"role": "user", "content": json.dumps(call.get("function") or {})}],
+                          thinking=False, max_tokens=256)["content"].strip()
+            messages.append({"role": "tool", "content": result, "tool_call_id": call["id"]})
+    else:
+        return None  # hit the turn budget without a final answer: not answer-bearing
+
+    if not messages or messages[-1].get("role") != "assistant":
+        return None
+    text = "\n".join(message_text(m) for m in messages if m.get("role") == "assistant")
+    return Trajectory(
+        id=id, domain=domain, origin="teacher", source=dict(source), messages=messages,
+        tools=tools, tokens=textutil.count_tokens(text),
+        meta={"simulated": True})
+
+
 if __name__ == "__main__":
     from .gencache import GenCache
     from .canonical import validate_trajectory
@@ -172,3 +222,18 @@ if __name__ == "__main__":
             print("renders through student.jinja: False |", type(exc).__name__, exc)
     else:
         print("renders through student.jinja: skipped (no student.jinja)")
+
+    sim_fake = FakeTeacher([
+        {"content": "<think>find the city</think>",
+         "tool_calls": [{"id": "c", "type": "function",
+                         "function": {"name": "clock", "arguments": "{\"city\": \"Lima\"}"}}]},
+        {"content": '{"time": "11:00"}'},
+        {"content": "It is 11:00 in Lima.", "tool_calls": []},
+    ])
+    sim_cache = GenCache(Path(tempfile.mkdtemp()) / "s.jsonl")
+    sim = generate_simulated(sim_fake, sim_cache, id="sim-1", domain="coding",
+                             source={"name": "teacher:tools"},
+                             tools=[{"type": "function", "function": {"name": "clock"}}],
+                             first_user="What time is it in Lima?")
+    print("sim roles:", [m["role"] for m in sim.messages],
+          "| simulated:", sim.meta["simulated"], "| problems:", validate_trajectory(sim))
