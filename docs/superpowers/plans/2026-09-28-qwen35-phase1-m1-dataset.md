@@ -1342,7 +1342,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import urllib.request
 from pathlib import Path
 
 from datasets import load_dataset
@@ -2918,7 +2920,7 @@ is a seed corpus that carries its own oracle: MBPP ships assert-style unit tests
 and drop failures *before* they can become student data. The checker is built and
 smoke-tested here; M2 calls it per generation.
 
-- [ ] **Step 1: Write `tools/dataset/testsets.py`**
+- [x] **Step 1: Write `tools/dataset/testsets.py`**
 
 ```python
 """Unit-test verification seeds: prompts whose tests filter teacher attempts.
@@ -2926,12 +2928,23 @@ smoke-tested here; M2 calls it per generation.
 MBPP ships assert-style tests; APPS ships stdin/stdout pairs. Each seed becomes a
 canonical Prompt with a `verify` spec attached, so M2 can execute the teacher's
 completion and drop failures before they can reach the student.
+
+Two sourcing notes, both measured against the live datasets:
+
+- MBPP's `sanitized` config holds only 120 rows, far under the plan's 400 cap, so the
+  `test` split is read too (257 more). The `full` config is larger but renames its fields
+  (`text`, `test_setup_code`), so it is left alone rather than given a second code path.
+- `codeparrot/apps` cannot be loaded by `datasets` 5.x: the repo ships a loading script
+  plus raw JSONL, and scripts are no longer supported. Its `train.jsonl` is streamed
+  directly over HTTP instead, which returns the same shape the mapper expects.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import urllib.request
 from pathlib import Path
 
 from datasets import load_dataset
@@ -2939,8 +2952,10 @@ from datasets import load_dataset
 from .canonical import Prompt, write_jsonl
 
 MBPP = {"dataset": "google-research-datasets/mbpp", "config": "sanitized",
-        "split": "train", "cap": 400}
-APPS = {"dataset": "codeparrot/apps", "config": None, "split": "train", "cap": 1000}
+        "splits": ("train", "test"), "cap": 400}
+APPS = {"dataset": "codeparrot/apps", "config": None, "cap": 1000}
+APPS_URL = ("https://huggingface.co/datasets/codeparrot/apps/"
+            "resolve/main/train.jsonl")
 
 
 def mbpp_prompt(row: dict, index: int) -> Prompt | None:
@@ -2968,13 +2983,20 @@ def apps_prompt(row: dict, index: int) -> Prompt | None:
         data = json.loads(raw)
     except json.JSONDecodeError:
         return None
+    except ValueError:
+        # Some rows carry integers with thousands of digits, which Python refuses to
+        # parse under its int-conversion guard (a DoS limit, not a data error). The
+        # row cannot be verified against stdin/stdout, so it is skipped like any other
+        # unusable one rather than aborting the harvest.
+        return None
     inputs, outputs = data.get("inputs") or [], data.get("outputs") or []
     pairs = [[i, o] for i, o in zip(inputs, outputs)
              if isinstance(i, str) and isinstance(o, str)]
     if not pairs:
         return None
     return Prompt(
-        id=f"apps-{row.get('problem_id', index)}",
+        # The raw JSONL keys this `id`; the loading script called it `problem_id`.
+        id=f"apps-{row.get('id', row.get('problem_id', index))}",
         domain="coding",
         origin="prebuilt",
         source={"name": APPS["dataset"], "row": index},
@@ -2984,19 +3006,38 @@ def apps_prompt(row: dict, index: int) -> Prompt | None:
     )
 
 
-def harvest(spec: dict, mapper) -> list[Prompt]:
+def _mbpp_rows():
+    """Stream MBPP across its splits; `sanitized` is small, so both are needed."""
+    for split in MBPP["splits"]:
+        stream = load_dataset(MBPP["dataset"], MBPP["config"], split=split,
+                              streaming=True)
+        yield from stream
+
+
+def _apps_rows():
+    """Stream APPS' raw JSONL directly: `load_dataset` rejects its loading script."""
+    token = os.environ.get("HF_TOKEN")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    req = urllib.request.Request(APPS_URL, headers=headers)
+    with urllib.request.urlopen(req, timeout=120) as response:
+        for line in response:
+            line = line.strip()
+            if line:
+                yield json.loads(line)
+
+
+def harvest(rows, mapper, cap: int, label: str) -> list[Prompt]:
     out: list[Prompt] = []
-    stream = load_dataset(spec["dataset"], spec["config"], split=spec["split"], streaming=True)
     seen = 0
-    for row in stream:
+    for row in rows:
         seen += 1
         rec = mapper(row, seen)
         if rec is None:
             continue
         out.append(rec)
-        if len(out) >= spec["cap"]:
+        if len(out) >= cap:
             break
-    print(f"{spec['dataset']} -> {len(out)} verification seeds")
+    print(f"{label} -> {len(out)} verification seeds (from {seen} rows)")
     return out
 
 
@@ -3018,7 +3059,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if args.smoke:
         return smoke()
-    seeds = harvest(MBPP, mbpp_prompt) + harvest(APPS, apps_prompt)
+    seeds = (harvest(_mbpp_rows(), mbpp_prompt, MBPP["cap"], MBPP["dataset"])
+             + harvest(_apps_rows(), apps_prompt, APPS["cap"], APPS["dataset"]))
     if not seeds:
         print("no verification seeds; nothing written")
         return 1
@@ -3031,7 +3073,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-- [ ] **Step 2: Write `tools/dataset/verify.py`**
+- [x] **Step 2: Write `tools/dataset/verify.py`**
 
 ```python
 """Execute a teacher completion against a seed's verification spec.
@@ -3141,7 +3183,7 @@ if __name__ == "__main__":
     print("answer mismatch:", check_answer("The answer is 5.", "4"))
 ```
 
-- [ ] **Step 3: Smoke, then fetch the seeds**
+- [x] **Step 3: Smoke, then fetch the seeds**
 
 ```powershell
 & "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.testsets --smoke
@@ -3151,10 +3193,18 @@ if __name__ == "__main__":
 Expected: `mbpp verify: python_tests 1`, `apps verify: python_io 1`,
 `no-test row dropped: None`; `tests positive: True | negative: False | exit 1: AssertionError`,
 `io positive: True`, `answer match: True`, `answer mismatch: False`; then
-`google-research-datasets/mbpp -> 400 verification seeds`,
-`codeparrot/apps -> 1000 verification seeds`, `verification seeds: 1400`.
+`google-research-datasets/mbpp -> 377 verification seeds (from 377 rows)`,
+`codeparrot/apps -> 624 verification seeds (from 5000 rows)`,
+`verification seeds: 1001`.
 
-- [ ] **Step 4: Commit**
+Neither source reaches its nominal cap, for reasons measured rather than assumed:
+MBPP's `sanitized` config holds 120 rows in `train` and 257 in `test`, so 377 is the
+whole usable dataset; APPS yields about 12.5% because most rows carry non-string
+`inputs`, so the 1,000 cap would need roughly 8,000 scanned rows. All 377 MBPP test
+suites pass against MBPP's own reference solution, which is what makes them oracles;
+APPS seeds reject both an echo-stdin and a crashing completion.
+
+- [x] **Step 4: Commit**
 
 ```powershell
 git add tools/dataset/testsets.py tools/dataset/verify.py
