@@ -58,18 +58,23 @@ MIN_TURN_TOKENS = 4
 
 
 def _loop_ratio(text: str) -> float:
-    """Degenerate-repeat ratio for one assistant span, scored on each part separately.
+    """Degenerate-repeat ratio, scored on the answer span only.
 
-    The teacher's reasoning trace frequently drafts the answer verbatim before emitting
-    it, so scoring the concatenation counts the draft as a repeat and flags legitimate
-    rows (measured: a row whose trace and answer each scored 0.0 scored 0.070 joined,
-    over the 0.05 threshold, and was dropped as `looping`).
+    The reasoning trace is excluded on purpose: it repeats itself legitimately. Measured
+    on a coding row (correct answer, `All tests passed!`), the trace scored 0.058 - driven
+    by a run of the word `zebra` the model used as its own test fixture - while the answer
+    scored 0.045. Only the answer reaches the student's response slot, so only the answer
+    is scored. The trace is a different distribution: re-printed code while iterating.
+
+    ponytail: the trace is left unchecked, so a severely looping trace can still ship.
+    Legitimate traces measured ~0.06; if M3's reward filter does not catch degenerate
+    traces, add a trace guard at a much higher bar (e.g. 0.25), not at LOOP_RATIO_MAX.
     """
     if THINK_CLOSE in text:
-        trace, answer = text.split(THINK_CLOSE, 1)
+        _, answer = text.split(THINK_CLOSE, 1)
     else:
-        trace, answer = "", text
-    return max(textutil.repeating_ngram_ratio(trace), textutil.repeating_ngram_ratio(answer))
+        answer = text
+    return textutil.repeating_ngram_ratio(answer)
 
 
 def response_reject_reason(text: str, tokens: int,
@@ -149,6 +154,11 @@ if __name__ == "__main__":
     drafted = " ".join(f"word{i}" for i in range(20))
     print("draft-echo not looping:",
           example_reject_reason(mk(f"<think>Draft: {drafted}</think>\n\n{drafted}")))
+    # Regression: a trace legitimately repeats itself (echoed test fixture, re-printed
+    # code). Only the answer span is scored, so this row is kept.
+    fixture = " ".join(["zebra"] * 40)
+    print("repetitive trace, clean answer kept:",
+          example_reject_reason(mk(f"<think>test with {fixture}</think>\n\nThe counter works.")))
     print("repeating answer still looping:",
           example_reject_reason(mk(f"<think>short plan</think>\n\n{' '.join(['a b c d e f g h'] * 30)}")))
     print("non-english:", example_reject_reason(mk("这是一段中文回答，用于测试语言过滤。")))

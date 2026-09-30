@@ -74,8 +74,26 @@ def normalise_answer(text: str) -> str:
     return re.sub(r"\s+", " ", text).rstrip(".")
 
 
+_NUMBER = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
+
+
 def check_answer(completion: str, gold: str) -> bool:
-    return normalise_answer(extract_answer(completion)) == normalise_answer(gold)
+    """Exact match after normalisation, with a numeric fallback for prose answers.
+
+    The pool prompts carry no "end with just the answer" instruction, so a correct
+    reasoning answer usually ends with prose. Measured: a GSM8K row with the right value
+    ended `James made **$126** from selling all the water.` and the last-line rule
+    rejected it ("answer mismatch"). When the gold normalises to a number, also accept
+    the answer's last numeric token - which is where the model puts its final value.
+    """
+    gold_norm = normalise_answer(gold)
+    if normalise_answer(extract_answer(completion)) == gold_norm:
+        return True
+    if _NUMBER.fullmatch(gold_norm):
+        numbers = _NUMBER.findall(strip_think(completion))
+        if numbers and normalise_answer(numbers[-1]) == gold_norm:
+            return True
+    return False
 
 
 def check_record(verify: dict | None, completion: str) -> tuple[bool, str]:
@@ -171,6 +189,8 @@ if __name__ == "__main__":
     print("io positive:", io_ok)
     print("answer match:", check_answer("<think>\n4\n</think>\n\n\\boxed{4}", "4"))
     print("answer mismatch:", check_answer("The answer is 5.", "4"))
+    print("prose numeric answer:", check_answer("James made **$126** from selling all the water.", "126"))
+    print("prose wrong number:", check_answer("James made **$105** from selling all the water.", "126"))
 
     good = Trajectory(
         id="t1", domain="coding", origin="teacher", source={"name": "s"},
