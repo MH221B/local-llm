@@ -49,11 +49,20 @@ def check_gpu() -> None:
 
 
 def mount_drive() -> None:
+    """Fail clearly when Drive is not mounted yet.
+
+    `google.colab.drive.mount` talks to the browser through the *kernel's* message channel,
+    so it cannot run in this `!python` subprocess: Colab raises
+    `AttributeError: 'NoneType' object has no attribute 'kernel'`, which reads like a Colab
+    bug rather than a usage error. The launcher cell mounts Drive first; see README.md.
+    """
     if Path("/content/drive/MyDrive").exists():
         print("Drive already mounted.", flush=True)
         return
-    from google.colab import drive                            # Colab-only import
-    drive.mount("/content/drive")
+    raise SystemExit(
+        "Drive is not mounted. Mount it in a notebook cell first, then re-run this file:\n"
+        "    from google.colab import drive\n"
+        "    drive.mount('/content/drive')")
 
 
 def stage_weights() -> None:

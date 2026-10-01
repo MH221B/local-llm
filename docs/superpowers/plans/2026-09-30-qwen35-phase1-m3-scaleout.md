@@ -109,8 +109,15 @@ the menu bar is where you pick hardware and stop the machine.
 
 1. **Runtime → Change runtime type** and re-select **L4 GPU** (Colab resets this between
    sessions).
-2. The notebook will ask to connect your Drive. Approve it; you may need to copy an auth
-   code back into the cell.
+2. **Mount Drive in its own cell before running the launcher.** `google.colab.drive.mount`
+   talks to the browser through the notebook kernel, so it only works in a `python` cell —
+   in the `!python` subprocess below it fails with `AttributeError: 'NoneType' object has no
+   attribute 'kernel'`, which reads like a Colab bug. Approve the prompt.
+
+   ```python
+   from google.colab import drive
+   drive.mount("/content/drive")
+   ```
 3. Run the launcher cell. The tokenizer repo is fixed for this teacher — Task 1 Step 5 read it out of the GGUF:
 
    ```
@@ -146,6 +153,9 @@ the menu bar is where you pick hardware and stop the machine.
 
 ## Troubleshooting
 
+- The launcher dies with `AttributeError: 'NoneType' object has no attribute 'kernel'` —
+  Drive is not mounted. Mount it in a `python` cell first (step 2 above); the mount call
+  cannot run inside the `!python` subprocess.
 - `CUDA out of memory` on load — another runtime is still alive. **Runtime → Manage
   sessions**, terminate the others, retry.
 - The launcher exits with a weight-mapping error — the GGUF plugin could not map this
@@ -232,11 +242,20 @@ def check_gpu() -> None:
 
 
 def mount_drive() -> None:
+    """Fail clearly when Drive is not mounted yet.
+
+    `google.colab.drive.mount` talks to the browser through the *kernel's* message channel,
+    so it cannot run in this `!python` subprocess: Colab raises
+    `AttributeError: 'NoneType' object has no attribute 'kernel'`, which reads like a Colab
+    bug rather than a usage error. The launcher cell mounts Drive first; see README.md.
+    """
     if Path("/content/drive/MyDrive").exists():
         print("Drive already mounted.", flush=True)
         return
-    from google.colab import drive                            # Colab-only import
-    drive.mount("/content/drive")
+    raise SystemExit(
+        "Drive is not mounted. Mount it in a notebook cell first, then re-run this file:\n"
+        "    from google.colab import drive\n"
+        "    drive.mount('/content/drive')")
 
 
 def stage_weights() -> None:
@@ -537,15 +556,20 @@ This is the task's real acceptance. Do it once, now, so the risk is found here r
 
 The cell below fetches the script from `main` over HTTPS, and the repo is public, so that works — but only once the file has been pushed. Step 7 is where the commit lives, so run Step 7 first. The alternative is to skip the `curl` line and upload the file to `/content/serve_teacher.py` through Colab's file browser (or paste it into a cell); everything after that is identical. Until the push lands, the raw URL is a 404, which is the only failure mode in this step.
 
-1. Open Colab, set the runtime to an L4 GPU, and run (substituting the tokenizer from Step 5):
+1. Open Colab and set the runtime to an L4 GPU. **Mount Drive in its own `python` cell first.** `google.colab.drive.mount` talks to the browser through the notebook kernel, so it cannot run inside the `!python` subprocess below — there it dies with `AttributeError: 'NoneType' object has no attribute 'kernel'`, which reads like a Colab bug rather than a usage error. Approve the prompt it raises.
+
+   ```python
+   from google.colab import drive
+   drive.mount("/content/drive")
+   ```
+
+2. Then run the launcher cell, which fetches the script from `main` and serves the teacher:
 
    ```
    !pip install -q pillow
    !curl -fsSL https://raw.githubusercontent.com/MH221B/local-llm/main/tools/colab/serve_teacher.py -o /content/serve_teacher.py
    !python /content/serve_teacher.py --tokenizer XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B
    ```
-
-2. Approve the Drive mount when prompted.
 
 Expected: the GPU line names an L4; `staging` lines for both GGUFs; a vLLM startup log; `server is up`; a short text reply; an image reply containing `red` and `image canary: PASS`; `reasoning canary: PASS` from a thinking call; `tools canary: PASS` from a call carrying `get_weather`; then the boxed `TEACHER_URL=` / `TEACHER_API_KEY=` banner. The tunnel only opens if all three PASS lines appear — `smoke()` returns False otherwise, so a failure here is loud rather than silent.
 

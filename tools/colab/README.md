@@ -28,8 +28,15 @@ the menu bar is where you pick hardware and stop the machine.
 
 1. **Runtime → Change runtime type** and re-select **L4 GPU** (Colab resets this between
    sessions).
-2. The notebook will ask to connect your Drive. Approve it; you may need to copy an auth
-   code back into the cell.
+2. **Mount Drive in its own cell before running the launcher.** `google.colab.drive.mount`
+   talks to the browser through the notebook kernel, so it only works in a `python` cell —
+   in the `!python` subprocess below it fails with `AttributeError: 'NoneType' object has no
+   attribute 'kernel'`, which reads like a Colab bug. Approve the prompt.
+
+   ```python
+   from google.colab import drive
+   drive.mount("/content/drive")
+   ```
 3. Run the launcher cell. The tokenizer repo is fixed for this teacher — Task 1 Step 5 read it out of the GGUF:
 
    ```
@@ -65,6 +72,9 @@ the menu bar is where you pick hardware and stop the machine.
 
 ## Troubleshooting
 
+- The launcher dies with `AttributeError: 'NoneType' object has no attribute 'kernel'` —
+  Drive is not mounted. Mount it in a `python` cell first (step 2 above); the mount call
+  cannot run inside the `!python` subprocess.
 - `CUDA out of memory` on load — another runtime is still alive. **Runtime → Manage
   sessions**, terminate the others, retry.
 - The launcher exits with a weight-mapping error — the GGUF plugin could not map this
