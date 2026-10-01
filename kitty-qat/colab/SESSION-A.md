@@ -32,11 +32,15 @@ Alternative (cleaner, if the repo is ever pushed to a git remote): skip the zip 
 ```
 
 ```python
-# Cell 2 — training. NOTE: 2,600 conversations yield ~4,225 windows → ~2,050
-# steps at batch 2 (~2-2.5 h). If the session cap is tight, lower the module
-# constant DATA_CONV in scripts/train_qat_colab.py (there is no CLI flag for it).
+# Cell 2 — training. NOTE: 2,600 conversations yield ~4,225 windows → ~2,081
+# optimizer steps at effective batch 2 (micro-batch 1 x accum 2), ~2-2.5 h.
+# --batch 2 OOMs the L4 (22 GiB) at the first step: the reference
+# chunk_gated_delta_rule fallback is the peak, and spec 4.3 forbids gradient
+# checkpointing. Accumulation keeps the effective batch at 2 at half the peak.
+# If the session cap is tight, lower the module constant DATA_CONV in
+# scripts/train_qat_colab.py (there is no CLI flag for it).
 # Adapter checkpoint exists only at the end.
-!python scripts/train_qat_colab.py --out /content/qat-lora
+!python scripts/train_qat_colab.py --out /content/qat-lora --batch 1 --accum 2
 ```
 
 ```python

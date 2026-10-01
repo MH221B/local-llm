@@ -3,13 +3,23 @@
 No gradient checkpointing anywhere (spec 4.3: the replay re-enters update() on
 an initialized cache). Teacher = same weights with adapters disabled, no second
 model copy. Fresh quantizing cache per step.
+
+Memory: a 512-token window through a 4B hybrid model at micro-batch 2 exceeds the
+L4's 22 GiB (the reference chunk_gated_delta_rule fallback is the peak). We keep
+the effective batch at 2 via --accum with --batch 1 micro-steps, which is exactly
+how the pre-Colab CPU gate already ran.
 """
 from __future__ import annotations
 
 import argparse
 import math
+import os
 import sys
 from pathlib import Path
+
+# Set before torch initializes the CUDA allocator. Reduces fragmentation, which
+# is what turns a "just barely fits" step into an OOM at the last allocation.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 # Allow running as a plain script (`python scripts/train_qat_colab.py`).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -27,20 +37,24 @@ DATA_CONV = 2600
 
 
 def kl_loss(t_logits, s_logits):
-    """KL(teacher ‖ student), temp 1, fp32, last 64 positions (spec 4.3)."""
-    return torch.nn.functional.kl_div(
-        torch.log_softmax(s_logits[:, -64:, :], dim=-1),
-        torch.log_softmax(t_logits[:, -64:, :], dim=-1),
-        log_target=True, reduction="batchmean",
-    )
+    """KL(teacher ‖ student), temp 1, last 64 positions (spec 4.3).
+
+    Slices to the last 64 positions BEFORE the fp32 upcast, so the full-vocab
+    logits are never materialized in fp32 (~0.6 GB saved per micro-step at
+    vocab ~150k).
+    """
+    t = torch.log_softmax(t_logits[:, -64:, :].float(), dim=-1)
+    s = torch.log_softmax(s_logits[:, -64:, :].float(), dim=-1)
+    return torch.nn.functional.kl_div(s, t, log_target=True, reduction="batchmean")
 
 
-def train_step(model, batch, optimizer) -> float:
+def train_step(model, batch, accum: int) -> float:
+    """One micro-step: forward both paths, backward the scaled KL. No optim step."""
     device = next(model.parameters()).device
 
     model.eval()
     with model.disable_adapter(), torch.no_grad():
-        t_logits = model(input_ids=batch.to(device), use_cache=False).logits.float()
+        t_logits = model(input_ids=batch.to(device), use_cache=False).logits
 
     model.train()
     cache, _ = build_kitty_cache(
@@ -51,12 +65,8 @@ def train_step(model, batch, optimizer) -> float:
                          past_key_values=cache).logits
     del cache
 
-    loss = kl_loss(t_logits.to(device), s_logits.float())
-    loss.backward()
-    torch.nn.utils.clip_grad_norm_(
-        [p for p in model.parameters() if p.requires_grad], 1.0)
-    optimizer.step()
-    optimizer.zero_grad(set_to_none=True)
+    loss = kl_loss(t_logits, s_logits)
+    (loss / accum).backward()
     return loss.item()
 
 
@@ -64,7 +74,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=Path, default=Path("qat-lora"))
     parser.add_argument("--epochs", type=int, default=1)
-    parser.add_argument("--batch", type=int, default=2)
+    parser.add_argument("--batch", type=int, default=1, help="micro-batch (VRAM-bound)")
+    parser.add_argument("--accum", type=int, default=2,
+                        help="gradient accumulation; effective batch = batch*accum")
     parser.add_argument("--lr", type=float, default=2e-4)
     args = parser.parse_args()
 
@@ -89,22 +101,35 @@ def main() -> None:
     train, held = split_windows(windows, holdout=HOLDOUT)
     print(f"train windows {len(train)}, held-out {len(held)}", flush=True)
 
-    n_steps = math.ceil(len(train) / args.batch) * args.epochs
+    effective = args.batch * args.accum
+    n_steps = math.ceil(len(train) / effective) * args.epochs
     optimizer = torch.optim.AdamW(
         [p for p in model.parameters() if p.requires_grad], lr=args.lr)
     sched = torch.optim.lr_scheduler.OneCycleLR(
         optimizer, max_lr=args.lr, total_steps=n_steps, pct_start=0.03)
 
+    trainables = [p for p in model.parameters() if p.requires_grad]
     model.train()
-    step = 0
+    micro = step = 0
     for epoch in range(args.epochs):
         for batch in batched(train, batch_size=args.batch):
-            loss = train_step(model, batch, optimizer)
-            sched.step()
-            step += 1
-            if step % 25 == 0 or step == 1:
-                print(f"step {step}/{n_steps} kl {loss:.4f} "
-                      f"lr {sched.get_last_lr()[0]:.3e}", flush=True)
+            loss = train_step(model, batch, args.accum)
+            micro += 1
+            if micro % args.accum == 0:
+                torch.nn.utils.clip_grad_norm_(trainables, 1.0)
+                optimizer.step()
+                sched.step()
+                optimizer.zero_grad(set_to_none=True)
+                step += 1
+                if step % 25 == 0 or step == 1:
+                    print(f"step {step}/{n_steps} kl {loss:.4f} "
+                          f"lr {sched.get_last_lr()[0]:.3e}", flush=True)
+    # flush a trailing partial accumulation (len(train) may not divide batch*accum)
+    if micro % args.accum != 0:
+        torch.nn.utils.clip_grad_norm_(trainables, 1.0)
+        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
+        step += 1
     print(f"done at step {step}")
 
     args.out.mkdir(parents=True, exist_ok=True)
