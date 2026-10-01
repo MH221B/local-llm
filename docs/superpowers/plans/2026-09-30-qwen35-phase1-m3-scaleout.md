@@ -1313,10 +1313,11 @@ git commit -m "feat(dataset): concurrent driver and authenticated teacher client
 **Files:**
 - Create: `tools/dataset/prompts/magpie_toolschema.md`
 - Modify: `tools/dataset/magpie.py`
+- Modify: `tools/dataset/generate.py` — the `--schema-limit` plumbing Task 3 deliberately deferred
 
 Spec §10.2 asks for simulated trajectories whose user turn is "invented from a `tools` schema when the seed is a tool set rather than a conversation". M2's Magpie invents from a *seed request* only, so the simulated path had nothing schema-conditioned to seed from. This task adds it, and fixes two things that only break at scale: ids derived from a list length (nondeterministic once generation is concurrent) and no dedup on invented prompts (irrelevant at 40 rows, not at 4,000).
 
-- [ ] **Step 1: Write the schema-conditioned template**
+- [x] **Step 1: Write the schema-conditioned template**
 
 Create `tools/dataset/prompts/magpie_toolschema.md`:
 
@@ -1332,7 +1333,7 @@ Tool schema: {schema}
 Example request (do not copy it): {seed}
 ```
 
-- [ ] **Step 2: Add schema-conditioned invention**
+- [x] **Step 2: Add schema-conditioned invention**
 
 In `tools/dataset/magpie.py`, add `import hashlib` and `import json` to the imports, then add after `invent`:
 
@@ -1384,7 +1385,7 @@ def invent_from_schema(client: TeacherClient, cache, *, schema: dict, example: s
     return text or None
 ```
 
-- [ ] **Step 3: Make ids content-derived and dedup the invented pool**
+- [x] **Step 3: Make ids content-derived and dedup the invented pool**
 
 A length-derived id is already fragile across re-runs; with concurrent invention it becomes actively wrong, because two workers append to `out` in arbitrary order and two different requests can receive the same id. Replace the id line in `build` and add the schema-building pass:
 
@@ -1459,7 +1460,7 @@ def build_schema_prompts(items, client, cache, *, limit, source_name, deduper=No
     return out
 ```
 
-- [ ] **Step 4: Extend `run` to build the schema pool and use content ids**
+- [x] **Step 4: Extend `run` to build the schema pool and use content ids**
 
 Replace `run` with a version that builds all three pools and writes them together. `schema_limit` defaults to `0` and `0` means "leave the existing pool alone", which is what keeps `generate.run_all`'s existing call working and keeps M2 resumable (see the note in Prerequisites).
 
@@ -1529,7 +1530,11 @@ construct the client with the key, and pass `schema_limit=args.schema_limit` to 
                schema_limit=args.schema_limit, dry_run=args.dry_run)
 ```
 
-- [ ] **Step 5: Smoke it**
+**Close the loop on the driver's side.** `magpie.run` now accepts `schema_limit`, so the plumbing Task 3 deferred lands here: `run_all` gains `schema_limit: int = 0` and forwards it to its `magpie.run` call, and `generate.main` gains `--schema-limit` (default `0`) and passes it through both `run_all` call sites. Without this, `--mode all` leaves the schema pool empty — magpie's `0` default means the flag has to be passed explicitly for the pool to be built at all, so the deterministic coding column would silently never appear.
+
+`magpie`'s own `--limit` also changes its default from `20` to `0`. The plan's rule is that `0` means "leave the pool alone", and with `limit=20` a bare `python -m tools.dataset.magpie --root <real root>` attempts 20 + 20 teacher calls *before* the shrink guard can refuse the write. Measured: it reached the teacher and raised `TeacherError` against a refused connection. With the default at `0`, the same command prints `magpie: skipped, both limits are 0; the existing pool is untouched` and exits 0 — which is what the guard's own message promises.
+
+- [x] **Step 5: Smoke it**
 
 The smoke must not hit the network, so it uses a `FakeTeacher` and asserts the two things that were broken: ids are content-derived, and a duplicate invention is rejected.
 
@@ -1590,7 +1595,18 @@ Add to the `__main__` block, after the existing prints:
 
 `GenCache` over a fresh temp path is used rather than a bare dict because it is what the real callers pass; two separate calls must use two separate caches, or the second is a cache hit and proves nothing about id stability.
 
-- [ ] **Step 6: Commit**
+The digest came out `magpie-tools-aede0235a25c` as predicted, which is the check that the id hashes the invented *text* rather than the seed. Four things the smoke cannot show were verified separately against a fixture:
+
+```
+1. refuse-to-shrink: return 1 (1 = refused) | pool byte-identical: True
+2. _extract_schemas: 1 pair(s) | tool name: book | example: 'Book a train'
+3. cross-pool dedup: request pass kept 1 | schema pass with identical text kept 0
+4. separate Dedupers do NOT share state: True
+```
+
+Line 1 is the guard from Step 4 firing before any write. Line 3 is the cross-pool duplicate the run's comment calls out: the same invented text arriving from the seeded pass and then the schema pass is rejected, which only happens because `run` shares one `Deduper` across all three pools. Line 4 is its control — two fresh `Deduper`s do not share state, so line 3 is measuring the sharing and not an accidental global.
+
+- [x] **Step 6: Commit**
 
 ```bash
 git add tools/dataset/magpie.py tools/dataset/prompts/magpie_toolschema.md

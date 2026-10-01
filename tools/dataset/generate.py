@@ -361,14 +361,15 @@ def run_merge(*, root: Path) -> dict:
 
 def run_all(*, root: Path, client, cache, limit: int | None, val_limit: int | None,
             multi_limit: int | None, sim_limit: int | None, magpie_limit: int,
-            thinking: bool, dry_run: bool, concurrency: int = 1):
+            thinking: bool, dry_run: bool, concurrency: int = 1, schema_limit: int = 0):
     if dry_run:
         print("[dry] magpie:", magpie_limit)
         print("[dry] trajectories:", multi_limit)
         print("[dry] simulated:", sim_limit)
         print("[dry] single-turn:", limit, "val:", val_limit)
         return
-    magpie.run(root=root, client=client, cache=cache, limit=magpie_limit, dry_run=False)
+    magpie.run(root=root, client=client, cache=cache, limit=magpie_limit, dry_run=False,
+               schema_limit=schema_limit)
     run_seeded(root=root, client=client, cache=cache, limit=limit, val_limit=val_limit,
                thinking=thinking, concurrency=concurrency)
     run_trajectory(root=root, client=client, cache=cache, limit=multi_limit, thinking=thinking,
@@ -451,6 +452,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="same, for the simulated pool (prebuilt seeds + schema seeds)")
     ap.add_argument("--magpie-limit", type=int, default=0,
                     help="Magpie inventions; 0 leaves the existing pool alone")
+    ap.add_argument("--schema-limit", type=int, default=0,
+                    help="Magpie tool-schema inventions; 0 leaves any existing pool alone")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
 
@@ -463,7 +466,8 @@ def main(argv: list[str] | None = None) -> int:
         run_all(root=args.root, client=client, cache=cache, limit=args.limit,
                 val_limit=args.val_limit, multi_limit=args.multi_limit,
                 sim_limit=args.sim_limit, magpie_limit=args.magpie_limit,
-                thinking=True, dry_run=True, concurrency=args.concurrency)
+                thinking=True, dry_run=True, concurrency=args.concurrency,
+                schema_limit=args.schema_limit)
         return 0
     # Probe the endpoint before any mode runs. A dead or rotated tunnel URL turns every row
     # into `teacher_error`, and the passes still complete: `run_seeded` writes
@@ -480,7 +484,8 @@ def main(argv: list[str] | None = None) -> int:
     run_all(root=args.root, client=client, cache=cache, limit=args.limit,
             val_limit=args.val_limit, multi_limit=args.multi_limit,
             sim_limit=args.sim_limit, magpie_limit=args.magpie_limit,
-            thinking=True, dry_run=False, concurrency=args.concurrency)
+            thinking=True, dry_run=False, concurrency=args.concurrency,
+            schema_limit=args.schema_limit)
     return 0
 
 
