@@ -1,10 +1,18 @@
-"""Merge the QAT adapters, restore the 15 mtp.* tensors, assert the index.
+"""Merge the QAT adapters, restore the 15 mtp.* tensors, assert the artifact.
 
 Runs AFTER the last save touching the output dir: any later save_pretrained
 silently drops mtp.* again (the HF graph has no MTP submodule — Spec 1 §3).
-safetensors files are append-immutable, so the restore writes a new shard and
-rewrites model.safetensors.index.json; tensors-on-disk-but-not-in-index is the
-failure mode this assert exists to catch.
+
+Handles both output layouts save_pretrained can produce:
+  * multi-shard : model-0000X-of-0000N.safetensors + model.safetensors.index.json
+  * single-shard: model.safetensors with NO index. A 4B fp16 model lands under
+    the default 5 GB shard threshold once the 297 visual.* tensors are gone, so
+    this is the common case for this checkpoint. We synthesize the index in that
+    branch so the mtp shard is reachable by both HF and the GGUF converter.
+
+safetensors files are append-immutable, so the mtp restore always writes a new
+shard; the failure mode this assert exists to catch is tensors on disk but not
+referenced by the index.
 """
 from __future__ import annotations
 
@@ -21,6 +29,23 @@ import torch
 from src.cache import load_model  # noqa: E402
 
 MODEL_ID = "RBergBauer/Qwen3.5-4B-MTP-Heretic"
+MTP_SHARD = "model-mtp.safetensors"
+INDEX_NAME = "model.safetensors.index.json"
+
+
+def _tensor_bytes(path: Path) -> int:
+    """Sum of tensor payload bytes in a safetensors file (no header overhead)."""
+    from safetensors import safe_open
+
+    total = 0
+    with safe_open(path, framework="pt", device="cpu") as f:
+        for k in f.keys():
+            sl = f.get_slice(k)
+            numel = 1
+            for d in sl.get_shape():
+                numel *= d
+            total += numel * torch.empty(0, dtype=sl.get_dtype()).element_size()
+    return total
 
 
 def main() -> None:
@@ -41,6 +66,7 @@ def main() -> None:
     model = model.merge_and_unload()
 
     args.out.mkdir(parents=True, exist_ok=True)
+    (args.out / MTP_SHARD).unlink(missing_ok=True)   # idempotent re-runs
     model.save_pretrained(args.out)          # 426 keys: no mtp submodule in the graph
     tokenizer.save_pretrained(args.out)
 
@@ -62,18 +88,30 @@ def main() -> None:
                 if s == shard:
                     tensors[k] = f.get_tensor(k)
     assert len(tensors) == 15, len(tensors)
+    save_file(tensors, args.out / MTP_SHARD)
 
-    out_index_path = args.out / "model.safetensors.index.json"
-    out_index = json.loads(out_index_path.read_text())
-    mtp_shard = "model-mtp.safetensors"
-    save_file(tensors, args.out / mtp_shard)
-    out_index["weight_map"].update({k: mtp_shard for k in mtp_names})
-    out_index["metadata"]["total_size"] += sum(
-        t.numel() * t.element_size() for t in tensors.values())
-    out_index_path.write_text(json.dumps(out_index, indent=2))
+    # ---- locate the text shard(s) and (re)write the index
+    text_shards = sorted(p for p in args.out.glob("*.safetensors") if p.name != MTP_SHARD)
+    index_path = args.out / INDEX_NAME
+
+    if index_path.exists():
+        idx = json.loads(index_path.read_text())          # multi-shard: keep its map
+    else:
+        # single-shard: synthesize an index over the text file + the mtp shard
+        assert len(text_shards) == 1, (
+            f"no index and not a single text shard: {[p.name for p in text_shards]}")
+        with safe_open(text_shards[0], framework="pt", device="cpu") as f:
+            text_names = list(f.keys())
+        idx = {"metadata": {"total_size": 0},
+               "weight_map": {k: text_shards[0].name for k in text_names}}
+
+    idx["weight_map"].update({k: MTP_SHARD for k in mtp_names})
+    all_shards = sorted(p for p in args.out.glob("*.safetensors"))
+    idx["metadata"]["total_size"] = sum(_tensor_bytes(p) for p in all_shards)
+    index_path.write_text(json.dumps(idx, indent=2))
 
     # ---- ASSERT 1 (spec 7): index ⊇ 15 mtp names, files exist, tensors in headers
-    idx = json.loads((args.out / "model.safetensors.index.json").read_text())
+    idx = json.loads(index_path.read_text())
     assert set(mtp_names).issubset(idx["weight_map"]), "index missing mtp names"
     for name in mtp_names:
         shard_path = args.out / idx["weight_map"][name]
@@ -82,7 +120,9 @@ def main() -> None:
             assert name in list(f.keys()), f"{name} absent from {shard_path} header"
 
     total = len(idx["weight_map"])
-    print("assert 1 ok: 15 mtp tensors carried, index rewritten, files on disk")
+    print(f"layout: {'multi-shard' if len(text_shards) > 1 else 'single-shard'} "
+          f"({[p.name for p in text_shards]}) + {MTP_SHARD}")
+    print("assert 1 ok: 15 mtp tensors carried, index written, files on disk")
     print(f"total index keys: {total}")
     assert total == 441, (
         f"expected 441 index keys (426 text + 15 mtp; the 297 visual.* keys live only "
