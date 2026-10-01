@@ -1,8 +1,9 @@
 # Spec 2 — KV-QAT on Kitty INT2 (Qwen3.5-4B-MTP-Heretic)
 
 **Status: PPL partial — eval interrupted, not complete.** Session B was stopped after
-the PPL job's `run1`/WikiText-2 tail. GSM8K and NIAH did **not** run. Task 9 (GGUF +
-MTP smoke) not done. Numbers below are the completed rows.
+the held-out and WikiText-2 **run0** rows. Only run0 is reported (run1 was interrupted
+and, being deterministic, would duplicate run0 anyway). GSM8K and NIAH did **not** run.
+Task 9 (GGUF + MTP smoke) not done. Numbers below are run0.
 
 Date: 2026-10-02. Adapter: `qat-lora` (LoRA r=8, `k_proj`+`v_proj` on the 8
 full-attention layers; 458,752 trainable params / 0.0109%). Merged artifact
@@ -74,10 +75,9 @@ not merely domain adaptation.** The in-domain delta alone cannot separate the tw
 - **No `fp16+qat` row**, so the QAT-vs-fine-tuning split is inferred from prefill
   deltas, not measured directly.
 - **No matched fp16-cache fine-tune** (the clean control for the confound).
-- **Run-to-run spread is not a noise estimate.** The eval is deterministic — `run1`
-  reproduced `run0` to the last digit (held `kitty-int2` 3.2839, `kitty-int2+qat`
-  3.2114 in both). Real uncertainty would need bootstrap over the 64 windows, not
-  repeat runs. `--runs 2` is therefore redundant; use `--runs 1`.
+- **Single run (run0 only).** The eval is deterministic — fixed windows,
+  teacher-forced decoding, same weights — so there is no run-to-run spread to report.
+  Real uncertainty would need a bootstrap over the 64 windows; `--runs 1` suffices.
 - **Task 9 not done:** GGUF convert + Assert 2 (33 blocks / 15 nextn) + llama-server
   MTP smoke. MTP is not exercised by any eval above (the HF graph has no MTP
   submodule); its integrity is only checked at the artifact/smoke stage.
