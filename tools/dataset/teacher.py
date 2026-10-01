@@ -87,31 +87,96 @@ def to_wire_messages(messages: list[dict], store=None) -> list[dict]:
 class TeacherClient:
     def __init__(self, base_url: str = "http://127.0.0.1:8086",
                  model: str = "local-teacher", timeout: int = 1800,
-                 retries: int = 3, backoff: float = 5.0):
+                 retries: int = 3, backoff: float = 5.0, api_key: str | None = None):
+        # 1800, not 900. `_post_retry` treats a timeout as terminal (it breaks before
+        # sleeping), and M2 measured rows being killed at 900s against this same teacher.
+        # The default stays at the value that survived that measurement.
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
         self.retries = retries
         self.backoff = backoff
+        self.api_key = api_key
+
+    def _headers(self) -> dict:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
 
     def _get(self, path: str) -> dict:
-        with urllib.request.urlopen(f"{self.base_url}{path}", timeout=30) as r:
+        req = urllib.request.Request(f"{self.base_url}{path}", headers=self._headers())
+        with urllib.request.urlopen(req, timeout=30) as r:
             return json.loads(r.read().decode("utf-8"))
 
     def _post(self, path: str, payload: dict) -> dict:
         req = urllib.request.Request(
             f"{self.base_url}{path}", data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"})
+            headers=self._headers())
         with urllib.request.urlopen(req, timeout=self.timeout) as r:
             return json.loads(r.read().decode("utf-8"))
 
-    def _post_retry(self, path: str, payload: dict) -> dict:
+    def _stream(self, payload: dict) -> dict:
+        """One completion, read as SSE and reassembled into a message dict.
+
+        Streaming is not an optimisation here, it is the only way a long completion
+        survives the tunnel. Cloudflare abandons a proxied request that has sent no bytes
+        for about 100 seconds (error 524), and a non-streaming completion sends nothing at
+        all until it is finished. M2 never hit this because the teacher was on
+        127.0.0.1; every M3 row goes through a quick tunnel, and the long-CoT rows are
+        exactly the ones that take longer than that. Retries and a larger timeout cannot
+        fix it, because the edge gives up regardless. Measured through the tunnel: a
+        4000-word reply returned `http 200 | 131.4s | 1.39 MB` of SSE.
+        """
+        req = urllib.request.Request(
+            f"{self.base_url}/v1/chat/completions",
+            data=json.dumps(payload).encode("utf-8"), headers=self._headers())
+        content: list[str] = []
+        reasoning: list[str] = []
+        calls: dict[int, dict] = {}
+        with urllib.request.urlopen(req, timeout=self.timeout) as r:
+            for raw in r:
+                line = raw.decode("utf-8").strip()
+                if not line.startswith("data:"):
+                    continue                        # keep-alive or comment frame
+                chunk = line[5:].strip()
+                if chunk == "[DONE]":
+                    break
+                try:
+                    delta = json.loads(chunk)["choices"][0].get("delta") or {}
+                except (json.JSONDecodeError, KeyError, IndexError):
+                    continue
+                if delta.get("content"):
+                    content.append(delta["content"])
+                if delta.get("reasoning_content"):
+                    reasoning.append(delta["reasoning_content"])
+                for call in delta.get("tool_calls") or []:
+                    # Tool calls arrive as fragments addressed by `index`: the name and
+                    # the arguments are spread across several frames.
+                    slot = calls.setdefault(call.get("index", 0),
+                                            {"id": None, "type": "function",
+                                             "function": {"name": "", "arguments": ""}})
+                    if call.get("id"):
+                        slot["id"] = call["id"]
+                    fn = call.get("function") or {}
+                    if fn.get("name"):
+                        slot["function"]["name"] += fn["name"]
+                    if fn.get("arguments"):
+                        slot["function"]["arguments"] += fn["arguments"]
+        out: dict = {"content": "".join(content)}
+        if reasoning:
+            out["reasoning_content"] = "".join(reasoning)
+        if calls:
+            out["tool_calls"] = [calls[i] for i in sorted(calls)]
+        return out
+
+    def _post_retry(self, path: str, payload: dict, *, stream: bool = False) -> dict:
         last: Exception | None = None
         attempts = 0
         for attempt in range(1, self.retries + 1):
             attempts = attempt
             try:
-                return self._post(path, payload)
+                return self._stream(payload) if stream else self._post(path, payload)
             except (urllib.error.URLError, TimeoutError, ConnectionError,
                     json.JSONDecodeError) as exc:
                 last = exc
@@ -143,7 +208,7 @@ class TeacherClient:
             "messages": to_wire_messages(messages, store),
             "temperature": temperature, "top_p": top_p, "top_k": top_k,
             "min_p": MIN_P, "presence_penalty": PRESENCE_PENALTY,
-            "stream": False,
+            "stream": True,
             "chat_template_kwargs": {"enable_thinking": thinking},
         }
         if max_tokens is not None:
@@ -152,12 +217,13 @@ class TeacherClient:
             payload["tools"] = tools
         if seed is not None:
             payload["seed"] = seed
-        reply = self._post_retry("/v1/chat/completions", payload)
-        return _fold_reasoning(reply["choices"][0]["message"])
+        reply = self._post_retry("/v1/chat/completions", payload, stream=True)
+        return _fold_reasoning(reply)
 
 
 if __name__ == "__main__":
     import io
+    import os
     import sys
     import tempfile
     from pathlib import Path
@@ -167,7 +233,7 @@ if __name__ == "__main__":
     from .imgstore import ImageStore
 
     url = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8086"
-    client = TeacherClient(url)
+    client = TeacherClient(url, api_key=os.environ.get("TEACHER_API_KEY") or None)
     info = client.props()
     print("model:", str(info.get("model_path", "?"))[-48:])
     print("template chars:", len(client.chat_template() or ""))

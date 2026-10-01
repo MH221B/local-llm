@@ -867,7 +867,7 @@ git commit -m "fix(dataset): make the cache and image store safe to share across
 
 vLLM's whole advantage is continuous batching, and a sequential driver leaves it idle. This task adds a bounded worker pool. Two invariants keep the change safe: workers touch only the cache and the network, and results are folded into statistics by the main thread in submission order, so `--concurrency 1` is identical to M2's behaviour in structure and in every statistic. Identical *acceptance* is a structural guarantee; identical *text* is not, because batching changes floating-point numerics even with a fixed seed.
 
-- [ ] **Step 1: Let the teacher client authenticate**
+- [x] **Step 1: Let the teacher client authenticate**
 
 In `tools/dataset/teacher.py`, replace the `TeacherClient.__init__` and `_post` so the tunnel can require a key. The Colab URL is public; without this, anyone who sees it can spend the GPU.
 
@@ -1008,7 +1008,7 @@ Also add `api_key` to the `__main__` smoke's client construction so a protected 
 
 and add `import os` to that block's imports (it currently imports `io`, `sys`, `tempfile`, `Path`).
 
-- [ ] **Step 2: Add the order-preserving map and the progress line**
+- [x] **Step 2: Add the order-preserving map and the progress line**
 
 In `tools/dataset/generate.py`, add these after the `_seed` helper. `_map` is the single place concurrency is introduced; everything stateful stays sequential.
 
@@ -1034,7 +1034,7 @@ def _progress(rel: str, done: int, total: int, stats: dict, every: int = 100) ->
           f"(pass {rate:.2f})", flush=True)
 ```
 
-- [ ] **Step 3: Thread `concurrency` through `_run_pool`**
+- [x] **Step 3: Thread `concurrency` through `_run_pool`**
 
 Replace `_run_pool` in `tools/dataset/generate.py` with this version. Two things stay exactly as they are: `root`, because it is where a rejected row is written, and the two `_record_reject` calls, because a drop whose completion is not stored cannot be audited. Only the request ordering in time changes.
 
@@ -1104,7 +1104,7 @@ def run_seeded(*, root: Path, client, cache, limit: int | None, val_limit: int |
     return stats
 ```
 
-- [ ] **Step 4: Thread `concurrency` through the trajectory and simulated passes**
+- [x] **Step 4: Thread `concurrency` through the trajectory and simulated passes**
 
 A multi-turn loop is a *sequence* of dependent calls, so trajectories cannot be parallelised within one row — but different rows can. Apply the same shape to `run_trajectory` and `run_simulated`: build the work function over the record list, `_map` it, then fold results sequentially — and keep every `_record_reject` call inside that sequential fold, so the reject ledger still names each dropped row.
 
@@ -1176,7 +1176,7 @@ and give the signature `concurrency: int = 1`. `_trajectory_reject` and the `_re
             return None, exc
 ```
 
-- [ ] **Step 5: Add the CLI flags and route them**
+- [x] **Step 5: Add the CLI flags and route them**
 
 In `tools/dataset/generate.py`'s `main`, add:
 
@@ -1189,8 +1189,6 @@ In `tools/dataset/generate.py`'s `main`, add:
     ap.add_argument("--timeout", type=int, default=1800,
                     help="seconds per teacher call; a timeout is terminal, not retried")
     ap.add_argument("--retries", type=int, default=3)
-    ap.add_argument("--schema-limit", type=int, default=0,
-                    help="Magpie tool-schema inventions; 0 leaves any existing pool alone")
 ```
 
 then **replace the four pool-limit defaults**, which are numbers today (`--limit 300`, `--val-limit 100`, `--multi-limit 100`, `--sim-limit 40`) and are guarded by truthiness in the M2 runners:
@@ -1229,7 +1227,9 @@ artefact level while the process exits 0:
         raise SystemExit(f"teacher endpoint {args.base_url} is unhealthy: {exc}")
 ```
 
-and pass `concurrency=args.concurrency` and `schema_limit=args.schema_limit` to `run_all`, which gains both keywords and forwards `schema_limit` to its `magpie.run` call. Add `sys.stdout.reconfigure(line_buffering=True)` as the first statement of `main()` so progress appears in a redirected log immediately.
+and pass `concurrency=args.concurrency` to `run_all`, which gains the keyword and forwards it to the three passes. Add `sys.stdout.reconfigure(line_buffering=True)` as the first statement of `main()` so progress appears in a redirected log immediately.
+
+`--schema-limit` is deliberately **not** added here, and its plumbing is not either. `magpie.run` does not accept the parameter until Task 4, so forwarding it in this commit would make `--mode all` raise `TypeError` — and `--mode all` is exactly what Step 7 runs. The flag, the `run_all` keyword and the refusal-to-shrink guard all land together in Task 4, where `magpie.run` learns about it.
 
 A caveat on the limits, because the two words "none" and "everything" are easy to swap and the swap is silent:
 
@@ -1240,7 +1240,7 @@ A caveat on the limits, because the two words "none" and "everything" are easy t
 
 The consequence to know before running anything: a bare `--mode all` now answers the **whole** corpus rather than M2's 300-prompt sample. That is the intent (spec §7: "The teacher answers every candidate"), but it is not a command to run casually against a Colab session.
 
-- [ ] **Step 6: Verify the offline smoke still passes and concurrency does nothing at 1**
+- [x] **Step 6: Verify the offline smoke still passes and concurrency does nothing at 1**
 
 ```powershell
 & "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.generate
@@ -1283,7 +1283,23 @@ Expected: the `seeded:` and `merged:` lines are **identical in `N`, `M` and `T`*
 
 Identical accepted counts are the point: concurrency must not change what ships. If they differ, a worker is mutating shared state — stop and fix before Task 8. The speedup is a secondary signal: below `2.0x` at `--concurrency 8`, batching is not happening, and the usual cause is a tunnel or a server configured for one sequence rather than a bug in the driver. Level `pass_rate` can legitimately differ in the last decimal between the two runs even with matched counts, because batching changes floating-point numerics; compare counts, not the rate.
 
-- [ ] **Step 8: Commit**
+**Both structural claims were verified locally first**, with a stub teacher that sleeps instead of a GPU — deterministic, free, and it does not depend on a session being up. 24 prompts, 0.25 s per call, `run_seeded` at concurrency 1 and 8 into separate temp roots with separate caches:
+
+```
+serial   :  6.05s  accepted 24  teacher calls 24
+parallel :  0.78s  accepted 24  teacher calls 24
+speedup  : 7.8x
+identical accepted ids   : True (24 vs 24)
+identical attempted      : True (24 vs 24)
+identical drops          : True {}
+identical by_domain      : True {'reasoning': 24}
+identical accepted_by_src: True
+one call per prompt      : True
+```
+
+That is this step's acceptance — batching happens, and nothing about what ships changes — without spending compute units. **The live half still has to run before Task 8**, for the one thing a stub cannot show: the real speedup against the tunnel and the server. That number is what Task 8's budget rests on, so run the command above at the start of the next session that has an endpoint, and pick `--concurrency` from the measured result rather than from this line.
+
+- [x] **Step 8: Commit**
 
 ```bash
 git add tools/dataset/generate.py tools/dataset/teacher.py
