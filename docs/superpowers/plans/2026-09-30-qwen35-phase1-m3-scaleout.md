@@ -74,7 +74,7 @@ Each helper answers one question: `anchor.py` sizes the pools, `audit.py` render
 
 This is the only task whose verification needs the internet and a Colab account. Everything after it is local.
 
-- [ ] **Step 1: Write the Colab primer**
+- [x] **Step 1: Write the Colab primer**
 
 `tools/colab/README.md` exists so the first Colab session is not guesswork. Write it with this content:
 
@@ -199,7 +199,7 @@ batching throughput. Watch the compute-units panel and stop the runtime when you
 generating.
 ````
 
-- [ ] **Step 2: Write the launcher script**
+- [x] **Step 2: Write the launcher script**
 
 `tools/colab/serve_teacher.py` is one file so a Colab beginner has one thing to run. Write it with this content:
 
@@ -536,7 +536,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-- [ ] **Step 3: Verify the script is syntactically valid and imports cleanly**
+- [x] **Step 3: Verify the script is syntactically valid and imports cleanly**
 
 `/content` and `google.colab` do not exist locally, so this checks syntax and the module-level imports the script does at import time (everything else is imported inside functions, deliberately, so this check works):
 
@@ -547,7 +547,7 @@ if __name__ == "__main__":
 
 Expected: `parses ok` then `imports ok: ornith-teacher 8000 MiMo-Ornith-9B-AGSI-Abliterated-HQ.i1-Q4_K_S.gguf`.
 
-- [ ] **Step 4: Check the file for angle-bracket corruption**
+- [x] **Step 4: Check the file for angle-bracket corruption**
 
 The write tool has corrupted `<`/`>` in this project before, so confirm the two load-bearing pairs are intact. Do **not** count them with `t.count(chr(60))`: the file legitimately contains 14 `->` return annotations and four bare `<` comparisons, so an ordinal count tells you nothing. Check the tags themselves:
 
@@ -557,7 +557,7 @@ The write tool has corrupted `<`/`>` in this project before, so confirm the two 
 
 Expected: `markers intact`, and nothing else. If the assert fires, one of the four literals was substituted — re-read the file and fix it before committing.
 
-- [ ] **Step 5: Discover the tokenizer repo**
+- [x] **Step 5: Discover the tokenizer repo**
 
 vLLM needs a Hugging Face tokenizer for this GGUF, and guessing wrong shows up as garbled output rather than a clean error. Read it out of the GGUF's own metadata with `gguf`, which is a small pure-Python package. The metadata lives inside the file, so run this against the local copy — it needs no Colab session and can be done before Step 6:
 
@@ -583,7 +583,7 @@ so the value is the *repo id* `XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B`, not the fu
 
 Note the base is **not** the `ornith-ai/Ornith-1.5-9B` an earlier draft guessed: that is a different family with a different chat template and vocabulary, and vLLM would accept it and then produce garbled output rather than a clean error. If `repo_url` is ever absent, fall back to `Qwen/Qwen3.5-9B` (the GGUF's `base_model` tag) and confirm the vocabulary is 248,320 before trusting the run.
 
-- [ ] **Step 6: Run it on Colab and prove the endpoint**
+- [x] **Step 6: Run it on Colab and prove the endpoint**
 
 This is the task's real acceptance. Do it once, now, so the risk is found here rather than in Task 8.
 
@@ -627,14 +627,20 @@ Invoke-RestMethod -Uri "$env:TEACHER_URL/v1/chat/completions" -Method Post -Cont
 Expected: a short reply such as `ok`. That proves the tunnel, the API key and the OpenAI-compatible surface work from your machine — but **not** that a real generation survives them, because a 32-token reply returns in a second. Cloudflare's edge abandons a proxied request that sends no bytes for about 100 seconds, so the second check is the one that matters:
 
 ```powershell
-$body = @{ model = "ornith-teacher"; max_tokens = 3000; temperature = 0.6
-           messages = @(@{ role = "user"; content = "Write a detailed 600-word essay about the history of the bicycle." }) } | ConvertTo-Json -Depth 6
-$t0 = Get-Date
-$reply = Invoke-RestMethod -Uri "$env:TEACHER_URL/v1/chat/completions" -Method Post -ContentType "application/json" -Headers @{ Authorization = "Bearer $env:TEACHER_API_KEY" } -Body $body
-"seconds {0:N0} | chars {1:N0}" -f ((Get-Date) - $t0).TotalSeconds, $reply.choices[0].message.content.Length
+$body = @{ model = "ornith-teacher"; stream = $true; max_tokens = 8000; temperature = 0.6
+           messages = @(@{ role = "user"; content = "Write a 4000-word essay on the history of the bicycle, with headings." }) } | ConvertTo-Json -Depth 6
+[IO.File]::WriteAllText("$env:TEMP\body.json", $body)
+curl.exe -N -s -o "$env:TEMP\sse.txt" -w "http %{http_code} | %{time_total}s | %{size_download} bytes`n" -X POST "$env:TEACHER_URL/v1/chat/completions" -H "Content-Type: application/json" -H "Authorization: Bearer $env:TEACHER_API_KEY" -d "@$env:TEMP\body.json"
 ```
 
-Expected: a reply of a few thousand characters that takes **more than 100 seconds** and still returns. If it fails with a 5xx around the 100-second mark, the request is not streaming: the driver must send `"stream": true` and read SSE (Task 3 Step 1), because no timeout or retry setting can hold a non-streamed request open past Cloudflare's edge limit. Verify this here, not in Task 8 — it is the difference between a corpus and a corpus-shaped file of `teacher_error` rows.
+Expected: `http 200`, `time_total` **over 100 seconds**, and a few hundred KB to ~1.5 MB of SSE frames. Measured on the accepted run: `http 200 | 131.363643s | 1394084 bytes`.
+
+Two traps, both measured, and an earlier draft of this check failed both:
+
+- **`max_tokens` has to be large enough to exceed 100 s at all.** This engine decodes at ~44.5 t/s per slot, so a 3000-token cap finishes in ~67 s and the original "600-word essay" in ~18 s — the check would pass while never reaching the wall it exists to find. 4000 words is ~5,300 tokens ≈ 119 s.
+- **The request must stream.** Keep `"stream": true` and time it with `curl.exe`; `Invoke-RestMethod` buffers the whole body and cannot show whether bytes flowed during the request. Streaming is the mode Task 3 Step 1's client uses, so passing *this* form is the evidence that a long row survives the tunnel.
+
+If it fails with a 5xx near the 100-second mark, or returns an error instantly, the shortcut is not streaming: no timeout or retry setting can hold a non-streamed request past Cloudflare's edge. Verify it here, not in Task 8 — it is the difference between a corpus and a corpus-shaped file of `teacher_error` rows.
 
 4. **The accepted engine is `llama-cpp`.** Measured on the first real run (Colab L4, 2026-10-01): vLLM 0.30.0 with `vllm-gguf-plugin` 0.0.5 dies at `RuntimeError: Unknown gguf model_type: qwen3_5` in `weights_adapter/default.py`, and upstream issue vllm-project/vllm#38122 is still open. The name map is only the first wall: this checkpoint's `vision_config` carries `depth` where the loader reads `num_hidden_layers`, and spec §7.6's image column makes vision mandatory. So the fallback is *the* path, not a plan B.
 
@@ -650,7 +656,7 @@ Expected: a reply of a few thousand characters that takes **more than 100 second
 
    Task 8 phase 1 re-measures the rate at the launch settings rather than trusting this line.
 
-- [ ] **Step 7: Commit and push**
+- [x] **Step 7: Commit and push**
 
 This is what makes Step 6's `curl` work, so it runs *before* the Colab cell when you are fetching the script over HTTPS:
 
