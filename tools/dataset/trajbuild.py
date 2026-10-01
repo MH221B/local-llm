@@ -10,14 +10,16 @@ from datasets import load_dataset
 from . import canonical, trajparse
 from .adapters.base import Ctx
 
-# (dataset, config, split, domain, parser, cap). Caps are prompt-candidate maxima; the
-# M2 run samples a subset. spec sections 7.2, 7.3.
+# (dataset, config, split, domain, parser, cap). Caps are prompt-candidate maxima, and are
+# now spec sections 7.2/7.3's multi-turn values: hermes 3,000 (split across its two configs),
+# ToolACE 3,000, and smoltalk's two roleplay configs 1,500 each. M2 sampled a 2,800-row
+# subset; `--limit-per-source` caps a run below the table, never above it.
 SOURCES = [
-    ("NousResearch/hermes-function-calling-v1", "func_calling", "train", "coding", "hermes", 800),
-    ("NousResearch/hermes-function-calling-v1", "func_calling_singleturn", "train", "coding", "hermes", 400),
-    ("Team-ACE/ToolACE", None, "train", "coding", "toolace", 800),
-    ("HuggingFaceTB/smoltalk", "systemchats-30k", "train", "roleplay", "chat", 400),
-    ("HuggingFaceTB/smoltalk", "everyday-conversations", "train", "roleplay", "chat", 400),
+    ("NousResearch/hermes-function-calling-v1", "func_calling", "train", "coding", "hermes", 1500),
+    ("NousResearch/hermes-function-calling-v1", "func_calling_singleturn", "train", "coding", "hermes", 1500),
+    ("Team-ACE/ToolACE", None, "train", "coding", "toolace", 3000),
+    ("HuggingFaceTB/smoltalk", "systemchats-30k", "train", "roleplay", "chat", 1500),
+    ("HuggingFaceTB/smoltalk", "everyday-conversations", "train", "roleplay", "chat", 1500),
 ]
 
 PARSERS = {

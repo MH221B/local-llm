@@ -2519,7 +2519,7 @@ git commit -m "feat(dataset): re-anchor source caps on M2's measured pass rates"
 
 M3's accepted target is 25,000 examples, so the *candidate* pool has to be the re-anchored one from Task 6, not M1's 3,000-prompt milestone corpus. This task regenerates it and re-invents the Magpie pools at scale.
 
-- [ ] **Step 1: Bring up the local student server for exact token counts**
+- [x] **Step 1: Bring up the local student server for exact token counts**
 
 The pipeline counts tokens exactly only if `llama-server` on 8085 is up; without it the manifest records a `chars/4` estimate. Start it as in the M1 rebuild guide:
 
@@ -2534,7 +2534,7 @@ Invoke-RestMethod http://127.0.0.1:8085/health
 
 Expected: `status ok`.
 
-- [ ] **Step 2: Rebuild the prompt corpus at the re-anchored caps**
+- [x] **Step 2: Rebuild the prompt corpus at the re-anchored caps**
 
 `--target-train` comes from Task 6 Step 3's `flags` block, not from a round number. If Step 3
 refused (M2's case), that is the default: `39000` with val flags of `1067` / `1067`. After
@@ -2565,7 +2565,20 @@ carefully:
   cap, so it is short too. Record both.
 - `V` will be near the `--val-size` you passed only if the val pool is large enough. The pipeline derives val by `stratified_split`, so a small `V` means the candidate pool was thin, not that the flag is wrong. And `V` is a *candidate* count: the accepted val rows are what `run_seeded`'s val loop writes, which is `V` times the blended pass rate.
 
-- [ ] **Step 3: Rebuild the multi-turn pools, then verify the corpus is prompt-only**
+**Measured, the M3 run of 2026-10-01 — 41 minutes, not hours:**
+
+```
+AI-MO/NuminaMath-1.5:None kept 13308
+openai/gsm8k:main kept 1922
+...
+seeds:uncensored kept 1939
+WARNING: short of target — train 38999/39000, val 1068/1067, pool 51442
+prompts train 38999, val 1068, manifest written
+```
+
+`token_counter: exact`, `prompts 38999 bad 0 []`, `with tools 858 | with verify 1395`. The one-row train shortfall is `stratified_split` handing val 1068 instead of 1067, after which the runner's strict `<` exits 1 — information, as the plan says, not failure. Both documented shortfalls landed exactly as predicted: `diagram_image_to_text` kept 300 against its 1,000 cap, and `seeds:uncensored` kept 1,939 of 2,500. The mix is coding 14,108 / reasoning 14,497 / roleplay 8,507 / **uncensored 1,887**; that column reaching roughly a third of its 5,000 target is Task 6's supply ceiling, measured rather than projected.
+
+- [x] **Step 3: Rebuild the multi-turn pools, then verify the corpus is prompt-only**
 
 `prompts/trajectories.jsonl` is not produced by `pipeline` — it comes from `trajbuild.py`, and nothing else in this plan regenerates it. M2 left **170** rows, 50 of them tool-carrying, against spec §7.2/§7.3's 3,000 coding and 3,000 roleplay multi-turn candidates. Without this step M3 ships a 25,000-row corpus whose entire prebuilt multi-turn content is those 170 rows, and spec §5.1 is explicit that flattening multi-turn sources to a first user turn discards the half that matters.
 
@@ -2594,6 +2607,23 @@ Expected: `trajectory prompts: M` and `tool-carrying: K` with `K <= M`. `K` is t
 prebuilt rows the trajectory pass can attempt, and both are the reason Task 8 omits
 `--multi-limit` (omitted means "every candidate") instead of naming a number that would have
 to be maintained by hand.
+
+**Measured, same run — 48 seconds:**
+
+```
+hermes-function-calling-v1:func_calling -> 346
+hermes-function-calling-v1:func_calling_singleturn -> 10
+Team-ACE/ToolACE -> 2763
+smoltalk systemchats-30k -> 1500
+smoltalk everyday-conversations -> 1500
+trajectory prompts: 6119 (simulated: 0)
+```
+
+`tool-carrying: 356`, `invalid trajectories: 0`, by domain coding 3,119 / roleplay 3,000. The cap raise is what bought this: M2's 2,800-cap table produced 170 rows, so the step would have shipped a 39,000-prompt corpus with 170 prebuilt multi-turn rows in it.
+
+The hermes configs are the shortfall, and it is a data-shape fact, not a cap bug. Both hold 1,893 rows. `build_hermes` accepts 927 and 1,100 of them respectively, but `validate_trajectory` requires every `tool_call` to be answered by a `tool` message, and `func_calling_singleturn`'s conversations *end* on the assistant's call — so 1,090 of its 1,100 built trajectories are rejected with `call '<id>' has no tool result`, leaving 10. `func_calling` keeps 346. Hermes therefore supplies 356 of its 3,000 cap, and ToolACE's 2,763 carry the coding column to 3,119.
+
+Recorded rather than fixed: whether an unanswered final tool call is a valid trajectory is a spec section 5.1 question about what a trajectory *is*, and the same rule is enforced at generation time (`trajectory.py`), so widening it is not a Task 7 edit. It costs no coding candidates here because ToolACE covers the column; it would matter if ToolACE were ever the thin one.
 
 - [ ] **Step 4: Re-invent the Magpie pools at scale**
 
