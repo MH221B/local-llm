@@ -41,7 +41,11 @@ def load(config_name: str, base: str, adapter: str | None, dtype):
 
         model = PeftModel.from_pretrained(model, adapter, cast_adapter_dtype=False)
         model = model.merge_and_unload()
-        model.eval()
+    # load_model() returns a CPU model (no device_map); move it once, centrally,
+    # so every row (and gsm8k/niah, which import this) runs on the GPU.
+    if torch.cuda.is_available():
+        model = model.cuda()
+    model.eval()
     return model, tok
 
 
