@@ -1,0 +1,51 @@
+{
+  "held": {
+    "run0": {
+      "fp16": {
+        "prefill_ppl": 4.4693,
+        "decode_ppl": 3.2159,
+        "windows": 64,
+        "decode_tokens": 20480
+      },
+      "kitty-int2": {
+        "prefill_ppl": 4.4693,
+        "decode_ppl": 3.2839,
+        "windows": 64,
+        "decode_tokens": 20480
+      },
+      "kitty-int2+qat": {
+        "prefill_ppl": 4.453,
+        "decode_ppl": 3.2114,
+        "windows": 64,
+        "decode_tokens": 20480
+      }
+    }
+  },
+  "wt2": {
+    "run0": {
+      "fp16": {
+        "prefill_ppl": 16.5982,
+        "decode_ppl": 9.8303,
+        "windows": 64,
+        "decode_tokens": 20480
+      },
+      "kitty-int2": {
+        "prefill_ppl": 16.5982,
+        "decode_ppl": 10.0974,
+        "windows": 64,
+        "decode_tokens": 20480
+      },
+      "kitty-int2+qat": {
+        "prefill_ppl": 16.7092,
+        "decode_ppl": 9.9965,
+        "windows": 64,
+        "decode_tokens": 20480
+      }
+    }
+  },
+  "spread": {
+    "fp16": null,
+    "kitty-int2": null,
+    "kitty-int2+qat": null
+  }
+}

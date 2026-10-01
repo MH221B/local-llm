@@ -95,4 +95,7 @@ not merely domain adaptation.** The in-domain delta alone cannot separate the tw
 ```
 
 Source of the numbers above: `bench/session-b-run0.log` (verbatim run0 console
-output; the `ppl-raw.json` was not saved — the run was stopped before the final write).
+output). `bench/ppl-raw.run0.json` is that output reconstructed into the exact shape
+`eval_ppl.py` writes — run0 only, `spread` null (the script only fills `spread` when
+`--runs >= 2`). The real `ppl-raw.json` was never written: the run was stopped before
+the final save.
