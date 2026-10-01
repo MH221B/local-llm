@@ -1,0 +1,206 @@
+# Session B — PPL, run0 only (verbatim console output)
+
+Provenance: pasted from the Colab Session B console, 2026-10-02. Only run0 is
+captured (held-out + WikiText-2). run1 was interrupted; the eval is deterministic,
+so run1 duplicates run0. The run was stopped before the final `ppl-raw.json` write,
+so this log is the source of record for `bench/qat-results.md`.
+
+Command:
+    !python scripts/eval_ppl.py --adapter /content/drive/MyDrive/qat-lora --wt2 --out /content/ppl-raw.json
+
+================================================================================
+
+=== held-out, run0 ===
+  loading fp16 ...
+[transformers] Missing validation function in 'RotaryEmbeddingConfigMixin' for 'rope_type'='axial'
+[transformers] Missing validation function in 'RotaryEmbeddingConfigMixin' for 'rope_type'='axial'
+Downloading bytes:           |  0.00B            
+Reconstructing (incomplete total...): |          |  0.00B /  0.00B            
+
+Fetching 3 files: 100% 3/3 [00:00<00:00, 1408.43it/s]
+Download complete: :           |  0.00B            
+Reconstruction complete: |          |  0.00B /  0.00B            
+Download complete: :           |  0.00B            
+Loading weights: 100% 426/426 [00:00<00:00, 3825.30it/s]
+    held0/fp16         window   4/64  running decode_ppl 4.4370
+    held0/fp16         window   8/64  running decode_ppl 3.7846
+    held0/fp16         window  12/64  running decode_ppl 3.2033
+    held0/fp16         window  16/64  running decode_ppl 2.9913
+    held0/fp16         window  20/64  running decode_ppl 3.0030
+    held0/fp16         window  24/64  running decode_ppl 3.0072
+    held0/fp16         window  28/64  running decode_ppl 3.0292
+    held0/fp16         window  32/64  running decode_ppl 3.0393
+    held0/fp16         window  36/64  running decode_ppl 3.0614
+    held0/fp16         window  40/64  running decode_ppl 3.1343
+    held0/fp16         window  44/64  running decode_ppl 3.1481
+    held0/fp16         window  48/64  running decode_ppl 3.1190
+    held0/fp16         window  52/64  running decode_ppl 3.2238
+    held0/fp16         window  56/64  running decode_ppl 3.2170
+    held0/fp16         window  60/64  running decode_ppl 3.2000
+    held0/fp16         window  64/64  running decode_ppl 3.2159
+fp16             {'prefill_ppl': 4.4693, 'decode_ppl': 3.2159, 'windows': 64, 'decode_tokens': 20480}
+  loading kitty-int2 ...
+[transformers] Missing validation function in 'RotaryEmbeddingConfigMixin' for 'rope_type'='axial'
+[transformers] Missing validation function in 'RotaryEmbeddingConfigMixin' for 'rope_type'='axial'
+Downloading bytes:           |  0.00B            
+Reconstructing (incomplete total...): |          |  0.00B /  0.00B            
+
+Fetching 3 files: 100% 3/3 [00:00<00:00, 1266.78it/s]
+Download complete: :           |  0.00B            
+Download complete: :           |  0.00B            
+Reconstruction complete: |          |  0.00B /  0.00B            
+Loading weights: 100% 426/426 [00:00<00:00, 4537.42it/s]
+    held0/kitty-int2   window   4/64  running decode_ppl 4.4525
+    held0/kitty-int2   window   8/64  running decode_ppl 3.8437
+    held0/kitty-int2   window  12/64  running decode_ppl 3.2559
+    held0/kitty-int2   window  16/64  running decode_ppl 3.0425
+    held0/kitty-int2   window  20/64  running decode_ppl 3.0609
+    held0/kitty-int2   window  24/64  running decode_ppl 3.0729
+    held0/kitty-int2   window  28/64  running decode_ppl 3.0723
+    held0/kitty-int2   window  32/64  running decode_ppl 3.0842
+    held0/kitty-int2   window  36/64  running decode_ppl 3.1179
+    held0/kitty-int2   window  40/64  running decode_ppl 3.1936
+    held0/kitty-int2   window  44/64  running decode_ppl 3.2071
+    held0/kitty-int2   window  48/64  running decode_ppl 3.1856
+    held0/kitty-int2   window  52/64  running decode_ppl 3.2881
+    held0/kitty-int2   window  56/64  running decode_ppl 3.2862
+    held0/kitty-int2   window  60/64  running decode_ppl 3.2688
+    held0/kitty-int2   window  64/64  running decode_ppl 3.2839
+kitty-int2       {'prefill_ppl': 4.4693, 'decode_ppl': 3.2839, 'windows': 64, 'decode_tokens': 20480}
+  loading kitty-int2+qat ...
+[transformers] Missing validation function in 'RotaryEmbeddingConfigMixin' for 'rope_type'='axial'
+[transformers] Missing validation function in 'RotaryEmbeddingConfigMixin' for 'rope_type'='axial'
+Downloading bytes:           |  0.00B            
+Reconstructing (incomplete total...): |          |  0.00B /  0.00B            
+
+Fetching 3 files: 100% 3/3 [00:00<00:00, 1277.71it/s]
+Download complete: :           |  0.00B            
+Reconstruction complete: |          |  0.00B /  0.00B            
+Download complete: :           |  0.00B            
+Loading weights: 100% 426/426 [00:00<00:00, 4765.96it/s]
+    held0/kitty-int2+qat window   4/64  running decode_ppl 4.3111
+    held0/kitty-int2+qat window   8/64  running decode_ppl 3.6990
+    held0/kitty-int2+qat window  12/64  running decode_ppl 3.1545
+    held0/kitty-int2+qat window  16/64  running decode_ppl 2.9565
+    held0/kitty-int2+qat window  20/64  running decode_ppl 2.9837
+    held0/kitty-int2+qat window  24/64  running decode_ppl 2.9979
+    held0/kitty-int2+qat window  28/64  running decode_ppl 2.9992
+    held0/kitty-int2+qat window  32/64  running decode_ppl 3.0153
+    held0/kitty-int2+qat window  36/64  running decode_ppl 3.0470
+    held0/kitty-int2+qat window  40/64  running decode_ppl 3.1238
+    held0/kitty-int2+qat window  44/64  running decode_ppl 3.1366
+    held0/kitty-int2+qat window  48/64  running decode_ppl 3.1130
+    held0/kitty-int2+qat window  52/64  running decode_ppl 3.2153
+    held0/kitty-int2+qat window  56/64  running decode_ppl 3.2122
+    held0/kitty-int2+qat window  60/64  running decode_ppl 3.1954
+    held0/kitty-int2+qat window  64/64  running decode_ppl 3.2114
+kitty-int2+qat   {'prefill_ppl': 4.453, 'decode_ppl': 3.2114, 'windows': 64, 'decode_tokens': 20480}
+README.md: 100% 10.5k/10.5k [00:00<00:00, 25.9MB/s]
+
+wikitext-2-raw-v1/test-00000-of-00001.pa(…): downloading bytes:   0% 0.00/733k [00:00<?, ?B/s]
+wikitext-2-raw-v1/test-00000-of-00001.pa(…): downloading bytes:  88% 641k/733k [00:01<00:00, 582kB/s, 27.7kB/s  ]
+wikitext-2-raw-v1/test-00000-of-00001.pa(…): downloading bytes: 100% 732k/732k [00:01<00:00, 544kB/s, 70.3kB/s  ]
+wikitext-2-raw-v1/test-00000-of-00001.pa(…): reconstructing file: 100% 733k/733k [00:01<00:00, 545kB/s, 70.6kB/s  ]
+
+wikitext-2-raw-v1/train-00000-of-00001.p(…): downloading bytes:  44% 2.78M/6.36M [00:01<00:00, 3.71MB/s,  102kB/s  ]
+wikitext-2-raw-v1/train-00000-of-00001.p(…): downloading bytes: 100% 6.35M/6.35M [00:01<00:00, 3.52MB/s,  602kB/s  ]
+wikitext-2-raw-v1/train-00000-of-00001.p(…): reconstructing file: 100% 6.36M/6.36M [00:01<00:00, 3.53MB/s,  606kB/s  ]
+
+wikitext-2-raw-v1/validation-00000-of-00(…): downloading bytes:   0% 0.00/657k [00:00<?, ?B/s]
+wikitext-2-raw-v1/validation-00000-of-00(…): downloading bytes: 100% 657k/657k [00:01<00:00, 564kB/s, 63.5kB/s  ]
+wikitext-2-raw-v1/validation-00000-of-00(…): reconstructing file: 100% 657k/657k [00:01<00:00, 564kB/s, 63.7kB/s  ]
+Generating test split: 100% 4358/4358 [00:00<00:00, 429149.79 examples/s]
+Generating train split: 100% 36718/36718 [00:00<00:00, 785995.85 examples/s]
+Generating validation split: 100% 3760/3760 [00:00<00:00, 624132.62 examples/s]
+[transformers] Token indices sequence length is longer than the specified maximum sequence length for this model (297053 > 262144). Running this sequence through the model will result in indexing errors
+
+=== wikitext-2, run0 ===
+  loading fp16 ...
+[transformers] Missing validation function in 'RotaryEmbeddingConfigMixin' for 'rope_type'='axial'
+[transformers] Missing validation function in 'RotaryEmbeddingConfigMixin' for 'rope_type'='axial'
+Downloading bytes:           |  0.00B            
+Reconstructing (incomplete total...): |          |  0.00B /  0.00B            
+
+Fetching 3 files: 100% 3/3 [00:00<00:00, 1459.90it/s]
+Download complete: :           |  0.00B            
+Reconstruction complete: |          |  0.00B /  0.00B            
+Download complete: :           |  0.00B            
+Loading weights: 100% 426/426 [00:00<00:00, 4042.57it/s]
+    wt20/fp16          window   4/64  running decode_ppl 8.2517
+    wt20/fp16          window   8/64  running decode_ppl 9.5815
+    wt20/fp16          window  12/64  running decode_ppl 9.2767
+    wt20/fp16          window  16/64  running decode_ppl 9.3581
+    wt20/fp16          window  20/64  running decode_ppl 9.9431
+    wt20/fp16          window  24/64  running decode_ppl 10.0011
+    wt20/fp16          window  28/64  running decode_ppl 9.4425
+    wt20/fp16          window  32/64  running decode_ppl 8.9246
+    wt20/fp16          window  36/64  running decode_ppl 8.6771
+    wt20/fp16          window  40/64  running decode_ppl 8.9096
+    wt20/fp16          window  44/64  running decode_ppl 9.3658
+    wt20/fp16          window  48/64  running decode_ppl 9.4765
+    wt20/fp16          window  52/64  running decode_ppl 9.5105
+    wt20/fp16          window  56/64  running decode_ppl 9.6305
+    wt20/fp16          window  60/64  running decode_ppl 9.8878
+    wt20/fp16          window  64/64  running decode_ppl 9.8303
+fp16             {'prefill_ppl': 16.5982, 'decode_ppl': 9.8303, 'windows': 64, 'decode_tokens': 20480}
+  loading kitty-int2 ...
+[transformers] Missing validation function in 'RotaryEmbeddingConfigMixin' for 'rope_type'='axial'
+[transformers] Missing validation function in 'RotaryEmbeddingConfigMixin' for 'rope_type'='axial'
+Downloading bytes:           |  0.00B            
+Reconstructing (incomplete total...): |          |  0.00B /  0.00B            
+
+Fetching 3 files: 100% 3/3 [00:00<00:00, 1407.64it/s]
+Download complete: :           |  0.00B            
+Download complete: :           |  0.00B            
+Reconstruction complete: |          |  0.00B /  0.00B            
+Loading weights: 100% 426/426 [00:00<00:00, 4350.18it/s]
+    wt20/kitty-int2    window   4/64  running decode_ppl 8.4490
+    wt20/kitty-int2    window   8/64  running decode_ppl 9.8246
+    wt20/kitty-int2    window  12/64  running decode_ppl 9.5300
+    wt20/kitty-int2    window  16/64  running decode_ppl 9.6073
+    wt20/kitty-int2    window  20/64  running decode_ppl 10.2104
+    wt20/kitty-int2    window  24/64  running decode_ppl 10.2629
+    wt20/kitty-int2    window  28/64  running decode_ppl 9.7047
+    wt20/kitty-int2    window  32/64  running decode_ppl 9.1651
+    wt20/kitty-int2    window  36/64  running decode_ppl 8.8782
+    wt20/kitty-int2    window  40/64  running decode_ppl 9.1293
+    wt20/kitty-int2    window  44/64  running decode_ppl 9.5972
+    wt20/kitty-int2    window  48/64  running decode_ppl 9.7105
+    wt20/kitty-int2    window  52/64  running decode_ppl 9.7534
+    wt20/kitty-int2    window  56/64  running decode_ppl 9.8729
+    wt20/kitty-int2    window  60/64  running decode_ppl 10.1573
+    wt20/kitty-int2    window  64/64  running decode_ppl 10.0974
+kitty-int2       {'prefill_ppl': 16.5982, 'decode_ppl': 10.0974, 'windows': 64, 'decode_tokens': 20480}
+  loading kitty-int2+qat ...
+[transformers] Missing validation function in 'RotaryEmbeddingConfigMixin' for 'rope_type'='axial'
+[transformers] Missing validation function in 'RotaryEmbeddingConfigMixin' for 'rope_type'='axial'
+Downloading bytes:           |  0.00B            
+Reconstructing (incomplete total...): |          |  0.00B /  0.00B            
+
+Fetching 3 files: 100% 3/3 [00:00<00:00, 1288.57it/s]
+Download complete: :           |  0.00B            
+Reconstruction complete: |          |  0.00B /  0.00B            
+Download complete: :           |  0.00B            
+Loading weights: 100% 426/426 [00:00<00:00, 5066.37it/s]
+    wt20/kitty-int2+qat window   4/64  running decode_ppl 8.4050
+    wt20/kitty-int2+qat window   8/64  running decode_ppl 9.7823
+    wt20/kitty-int2+qat window  12/64  running decode_ppl 9.4575
+    wt20/kitty-int2+qat window  16/64  running decode_ppl 9.5383
+    wt20/kitty-int2+qat window  20/64  running decode_ppl 10.1211
+    wt20/kitty-int2+qat window  24/64  running decode_ppl 10.1667
+    wt20/kitty-int2+qat window  28/64  running decode_ppl 9.6197
+    wt20/kitty-int2+qat window  32/64  running decode_ppl 9.0811
+    wt20/kitty-int2+qat window  36/64  running decode_ppl 8.8069
+    wt20/kitty-int2+qat window  40/64  running decode_ppl 9.0449
+    wt20/kitty-int2+qat window  44/64  running decode_ppl 9.5095
+    wt20/kitty-int2+qat window  48/64  running decode_ppl 9.6245
+    wt20/kitty-int2+qat window  52/64  running decode_ppl 9.6601
+    wt20/kitty-int2+qat window  56/64  running decode_ppl 9.7754
+    wt20/kitty-int2+qat window  60/64  running decode_ppl 10.0462
+    wt20/kitty-int2+qat window  64/64  running decode_ppl 9.9965
+kitty-int2+qat   {'prefill_ppl': 16.7092, 'decode_ppl': 9.9965, 'windows': 64, 'decode_tokens': 20480}
+
+=== held-out, run1 ===
+  loading kitty-int2 ...
+    (run1 held-out and wikitext-2 were started and then interrupted; the eval is
+     deterministic, so they duplicate run0. Not reproduced here.)

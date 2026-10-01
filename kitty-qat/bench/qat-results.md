@@ -94,5 +94,5 @@ not merely domain adaptation.** The in-domain delta alone cannot separate the tw
 !python scripts/eval_ppl.py --adapter /content/drive/MyDrive/qat-lora --wt2 --runs 1 --out /content/ppl-raw.json
 ```
 
-Source of the numbers above: the Session B console output (the `ppl-raw.json` was
-not saved — the run was stopped before the final write).
+Source of the numbers above: `bench/session-b-run0.log` (verbatim run0 console
+output; the `ppl-raw.json` was not saved — the run was stopped before the final write).
