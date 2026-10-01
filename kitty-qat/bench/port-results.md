@@ -106,3 +106,10 @@ expected Spec 2 picture (fine-tunes are trained on the losses, not on pass rates
 - The post-quant return semantics reproduced here mean every eval config attends on
   one-step-lagged quantized pages — matching the reference, on the same numbers Spec 2
   builds on.
+
+## Spec 2 pre-Colab gate (2026-10-01)
+
+`scripts/smoke_trainstep.py` (CPU): trainable 458,752 params / 0.0109%, fresh-cache
+training step asserts all green (3 K pages + 1 prefill V block per swapped layer,
+512-token windows), adapter grads finite and nonzero, KL finite across 2 steps
+(3.44 → 1.34, decreasing). Green before any Colab spend, per spec §8.
