@@ -111,10 +111,10 @@ the menu bar is where you pick hardware and stop the machine.
    sessions).
 2. The notebook will ask to connect your Drive. Approve it; you may need to copy an auth
    code back into the cell.
-3. Run the launcher cell, passing the tokenizer repo discovered in Task 1 Step 5:
+3. Run the launcher cell. The tokenizer repo is fixed for this teacher — Task 1 Step 5 read it out of the GGUF:
 
    ```
-   !python /content/serve_teacher.py --tokenizer PASTE_THE_REPO_URL_HERE
+   !python /content/serve_teacher.py --tokenizer XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B
    ```
 
    Copy the `trycloudflare.com` URL it prints. That URL is the teacher's address for this
@@ -516,9 +516,20 @@ vLLM needs a Hugging Face tokenizer for this GGUF, and guessing wrong shows up a
 
 The same two lines work on Colab with `/content/models/...` once Step 6 has staged the file, which is the fallback if the local copy is unavailable.
 
-Expected: a `repo_url` naming the teacher's base repository, and `general.architecture` reading `qwen35`. **Record the `repo_url`** — that string is the `--tokenizer` value for every later launch, and it belongs in the Step 7 primer.
+Expected: a `repo_url` naming the teacher's base repository, and `general.architecture` reading `qwen35`. **Record the `repo_url`** — that string is the `--tokenizer` value for every later launch.
 
-If `repo_url` is absent, the fallback is the public base family repository `ornith-ai/Ornith-1.5-9B`; the vocabulary size (248,320) has to match, and the Step 6 smoke is what proves it did.
+Measured on the local GGUF when Task 1 was first executed:
+
+```
+general.architecture               = qwen35
+general.base_model.0.repo_url      = https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B
+general.base_model.0.name          = MiMo V2.6 Distill Qwen 9B
+tokenizer.ggml.tokens (vocab size) = 248320
+```
+
+so the value is the *repo id* `XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B`, not the full URL. That repository is public (`gated: false`) and its `config.json` reports `vocab_size: 248320`, which is the match the smoke depends on — no `HF_TOKEN` is needed to fetch it.
+
+Note the base is **not** the `ornith-ai/Ornith-1.5-9B` an earlier draft guessed: that is a different family with a different chat template and vocabulary, and vLLM would accept it and then produce garbled output rather than a clean error. If `repo_url` is ever absent, fall back to `Qwen/Qwen3.5-9B` (the GGUF's `base_model` tag) and confirm the vocabulary is 248,320 before trusting the run.
 
 - [ ] **Step 6: Run it on Colab and prove the endpoint**
 
@@ -531,7 +542,7 @@ The cell below fetches the script from `main` over HTTPS, and the repo is public
    ```
    !pip install -q pillow
    !curl -fsSL https://raw.githubusercontent.com/MH221B/local-llm/main/tools/colab/serve_teacher.py -o /content/serve_teacher.py
-   !python /content/serve_teacher.py --tokenizer REPO_FROM_STEP_5
+   !python /content/serve_teacher.py --tokenizer XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B
    ```
 
 2. Approve the Drive mount when prompted.
@@ -568,7 +579,7 @@ $reply = Invoke-RestMethod -Uri "$env:TEACHER_URL/v1/chat/completions" -Method P
 
 Expected: a reply of a few thousand characters that takes **more than 100 seconds** and still returns. If it fails with a 5xx around the 100-second mark, the request is not streaming: the driver must send `"stream": true` and read SSE (Task 3 Step 1), because no timeout or retry setting can hold a non-streamed request open past Cloudflare's edge limit. Verify this here, not in Task 8 — it is the difference between a corpus and a corpus-shaped file of `teacher_error` rows.
 
-4. If vLLM failed to map the architecture, re-run as `!python /content/serve_teacher.py --engine llama-cpp --tokenizer REPO_FROM_STEP_5` and repeat steps 2 and 3. **Record which engine served the accepted smoke** — it belongs in the guide in Task 8, and it decides whether Task 8's cost estimate needs re-measuring.
+4. If vLLM failed to map the architecture, re-run as `!python /content/serve_teacher.py --engine llama-cpp --tokenizer XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B` and repeat steps 2 and 3. **Record which engine served the accepted smoke** — it belongs in the guide in Task 8, and it decides whether Task 8's cost estimate needs re-measuring.
 
 - [ ] **Step 7: Commit and push**
 
