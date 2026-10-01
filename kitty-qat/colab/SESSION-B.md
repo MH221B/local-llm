@@ -9,8 +9,9 @@ the merged dir is for the local Task-9 GGUF convert.
 ```python
 # Cell 1
 !pip install -q peft datasets gguf
-!unzip -q /content/drive/MyDrive/kitty-qat.zip -d /content
+!unzip -q -o /content/drive/MyDrive/kitty-qat.zip -d /content
 %cd /content/kitty-qat
+!ls
 ```
 
 ```python
