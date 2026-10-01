@@ -56,13 +56,15 @@ def main() -> None:
 
     results = {}
     for name in CONFIGS:
+        print(f"\n=== niah {name} ===", flush=True)
+        print(f"  loading {name} ...", flush=True)
         model, tok = load(name, args.model, args.adapter, torch.float16)
         cache, swapped = build_kitty_cache(
             DynamicCache(config=model.config), model.config, **CONFIGS[name]
         )
         hits = 0
         details = []
-        for haystack, code in examples:
+        for i, (haystack, code) in enumerate(examples, 1):
             ids = tok(
                 "Below is a long document. Find the passcode in it and answer "
                 "with just the passcode.\n\n" + haystack,
@@ -76,6 +78,8 @@ def main() -> None:
             hits += found
             details.append({"haystack_tokens": int(ids.shape[-1]), "pass": found,
                             "completion": text[:120]})
+            print(f"    niah {name:14s} {i:>3}/{len(examples)} hits={hits} "
+                  f"(haystack {int(ids.shape[-1])} tok)", flush=True)
         pages = sum(cache.layers[i].quantized_pages for i in swapped)
         if name != "fp16":
             assert pages > 0, f"{name}: nothing quantized - INT2 row is fp16"

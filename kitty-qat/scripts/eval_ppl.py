@@ -86,26 +86,32 @@ def nll_window(model, window: list[int], cfg: dict) -> tuple[float, float, int, 
     return pre_nll, dec_nll, PREFILL - 1, n_dec
 
 
-def eval_config(model, windows, cfg: dict) -> dict:
+def eval_config(model, windows, cfg: dict, label: str = "") -> dict:
     pre_nll = dec_nll = 0.0
     n_pre = n_dec = 0
-    for w in windows:
+    n = len(windows)
+    for i, w in enumerate(windows, 1):
         p, d, np_, nd = nll_window(model, w, cfg)
         pre_nll += p; dec_nll += d; n_pre += np_; n_dec += nd
+        if i % 4 == 0 or i == n:   # ~every 40 s: one window is ~10 s on the L4
+            running = float(torch.exp(torch.tensor(dec_nll / n_dec)))
+            print(f"    {label:18s} window {i:>3}/{n}  "
+                  f"running decode_ppl {running:.4f}", flush=True)
     decode_ppl = float(torch.exp(torch.tensor(dec_nll / n_dec)))
     prefill_ppl = float(torch.exp(torch.tensor(pre_nll / n_pre)))
     return {"prefill_ppl": round(prefill_ppl, 4), "decode_ppl": round(decode_ppl, 4),
-            "windows": len(windows), "decode_tokens": n_dec}
+            "windows": n, "decode_tokens": n_dec}
 
 
-def run_rows(args, held, skip_fp16: bool = False) -> dict:
+def run_rows(args, held, skip_fp16: bool = False, label: str = "") -> dict:
     rows = {}
     for name, cfg in CONFIGS.items():
         if skip_fp16 and name == "fp16":
             continue   # spec 6: fp16 rows are not double-run (not in the gate)
+        print(f"  loading {name} ...", flush=True)
         model, _ = load(name, args.model, args.adapter, torch.float16)
 
-        rows[name] = eval_config(model, held, cfg)
+        rows[name] = eval_config(model, held, cfg, label=f"{label}/{name}")
         print(f"{name:16s} {rows[name]}", flush=True)
         del model
         torch.cuda.empty_cache()   # safe no-op on CPU-only torch
@@ -132,10 +138,14 @@ def main() -> None:
     if args.wt2:
         results["wt2"] = {}
     for run in range(args.runs):
-        results["held"][f"run{run}"] = run_rows(args, held, skip_fp16=(run > 0))
+        print(f"\n=== held-out, run{run} ===", flush=True)
+        results["held"][f"run{run}"] = run_rows(
+            args, held, skip_fp16=(run > 0), label=f"held{run}")
         if args.wt2:
             wt2_windows = build_windows_raw(tok)[-HOLDOUT:]
-            results["wt2"][f"run{run}"] = run_rows(args, wt2_windows, skip_fp16=(run > 0))
+            print(f"\n=== wikitext-2, run{run} ===", flush=True)
+            results["wt2"][f"run{run}"] = run_rows(
+                args, wt2_windows, skip_fp16=(run > 0), label=f"wt2{run}")
 
     def spread(name: str):
         if args.runs < 2 or name == "fp16":
@@ -146,6 +156,17 @@ def main() -> None:
 
     results["spread"] = {n: spread(n) for n in CONFIGS}
     args.out.write_text(json.dumps(results, indent=2))
+
+    print("\n=== decode_ppl summary ===", flush=True)
+    for col, runs in results.items():
+        if col == "spread":
+            continue
+        for name in CONFIGS:
+            for rk, row in runs.items():
+                if name in row:
+                    print(f"  {col:5s} {rk}  {name:16s} "
+                          f"prefill {row[name]['prefill_ppl']:8.3f}  "
+                          f"decode {row[name]['decode_ppl']:8.4f}", flush=True)
     print(f"wrote {args.out}")
 
 

@@ -56,13 +56,15 @@ def main() -> None:
 
     results = {}
     for name in CONFIGS:
+        print(f"\n=== gsm8k {name} ===", flush=True)
+        print(f"  loading {name} ...", flush=True)
         model, tok = load(name, args.model, args.adapter, torch.float16)
         cache, swapped = build_kitty_cache(
             DynamicCache(config=model.config), model.config, **CONFIGS[name]
         )
         correct = 0
         details = []
-        for ex in test:
+        for i, ex in enumerate(test, 1):
             chat = tok.apply_chat_template(
                 [{"role": "user", "content": prompt + ex["question"]}],
                 add_generation_prompt=True, tokenize=False, enable_thinking=False)
@@ -79,6 +81,9 @@ def main() -> None:
             details.append({"question": ex["question"], "pred": pred,
                             "expected": expected, "pass": ok,
                             "completion_head": completion[:200]})
+            if i % 5 == 0 or i == len(test):
+                print(f"    gsm8k {name:14s} {i:>3}/{len(test)} correct={correct}",
+                      flush=True)
         pages = sum(cache.layers[i].quantized_pages for i in swapped)
         if name != "fp16":
             assert pages > 0, f"{name}: nothing quantized - INT2 row is fp16"
