@@ -259,6 +259,12 @@ def serve_vllm(tokenizer: str) -> subprocess.Popen:
     same directory as the model, which is why `stage_weights` puts both files in one place.
     That auto-detection is unverified for this model, and the image canary in `smoke()` is
     what decides whether it worked.
+
+    `--max-num-seqs` is the ceiling on concurrently running sequences, and on this model that
+    ceiling is throughput: decode is weight-bound, so aggregate tokens/second is roughly
+    `steps_per_second x batch`. The driver's `--concurrency` must not exceed it, or the server
+    queues what the driver sends and phase 1 measures the lower number. Raise both together —
+    32 to start, 48 if the KV budget allows.
     """
     sh("pip install -q --upgrade vllm vllm-gguf-plugin")
     cmd = (f"vllm serve {shlex.quote(str(LOCAL_MODELS / TEXT_GGUF))} "
@@ -2642,7 +2648,7 @@ gets at least ~200 attempts, which is the bar `anchor.py` now enforces:
 Start-Process -FilePath "$HOME\miniconda3\envs\dataset\python.exe" `
   -ArgumentList @("-m","tools.dataset.generate","--mode","all","--root","datasets/qwen35-4b-sft",
                   "--base-url",$env:TEACHER_URL,"--api-key",$env:TEACHER_API_KEY,
-                  "--model","ornith-teacher","--concurrency","12","--timeout","1800",
+                  "--model","ornith-teacher","--concurrency","32","--timeout","1800",
                   "--cache","datasets/qwen35-4b-sft/m2/cache.jsonl",
                   "--limit","800","--val-limit","0","--magpie-limit","0") `
   -RedirectStandardOutput "$env:TEMP\opencode\m3-phase1.log" `
@@ -2650,8 +2656,24 @@ Start-Process -FilePath "$HOME\miniconda3\envs\dataset\python.exe" `
 ```
 
 Then read `m2/seeded.stats.json` and the manifest: `pass_rate_by_source`, and the observed
-**tokens/second** (total tokens over wall-clock, from the log's timestamps). Two decisions
-come out of phase 1 and nothing else may overrule them:
+**tokens/second** (total output tokens over wall-clock, from the log's first and last
+timestamps). To turn a projection into a measurement, run two small slices through **two
+separate caches** at two concurrency settings — the same slice replayed from a warm cache would
+measure nothing:
+
+```powershell
+& "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.generate --mode all --root datasets/qwen35-4b-sft --base-url $env:TEACHER_URL --api-key $env:TEACHER_API_KEY --limit 200 --val-limit 0 --magpie-limit 0 --cache "$env:TEMP\opencode\perf-32.jsonl" --concurrency 32
+& "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.generate --mode all --root datasets/qwen35-4b-sft --base-url $env:TEACHER_URL --api-key $env:TEACHER_API_KEY --limit 200 --val-limit 0 --magpie-limit 0 --cache "$env:TEMP\opencode\perf-48.jsonl" --concurrency 48
+```
+
+Take the better setting as phase 2's `--concurrency`. Decode on this model is weight-bound —
+each step reads the 5.34 GB of weights, so aggregate throughput is roughly
+`steps_per_second × batch` — which is why the plan's earlier `--concurrency 12` implied ~43 h
+for the full pass while 32-48 implies 11-16 h. The server's `--max-num-seqs` must be at least
+as large as the driver's concurrency, or it queues what the driver sends and the measurement
+reports the lower number.
+
+Two decisions come out of phase 1 and nothing else may overrule them:
 
 - if a domain's rate is materially below its §7 threshold (reasoning < 0.60, coding < 0.577,
   roleplay < 0.667, uncensored < 0.833), re-anchor with `anchor.py` (Task 6 Step 3) and
@@ -2683,7 +2705,7 @@ form of the command in this plan — do not also run a foreground copy:
 Start-Process -FilePath "$HOME\miniconda3\envs\dataset\python.exe" `
   -ArgumentList @("-m","tools.dataset.generate","--mode","all","--root","datasets/qwen35-4b-sft",
                   "--base-url",$env:TEACHER_URL,"--api-key",$env:TEACHER_API_KEY,
-                  "--model","ornith-teacher","--concurrency","12","--timeout","1800",
+                  "--model","ornith-teacher","--concurrency","32","--timeout","1800",
                   "--cache","datasets/qwen35-4b-sft/m2/cache.jsonl",
                   "--limit","39000","--val-limit","1067","--magpie-limit","0") `
   -RedirectStandardOutput "$env:TEMP\opencode\m3-run.log" `
@@ -2734,6 +2756,21 @@ $m.train_final.token_share; $m.train_final.image_bearing_share
 Expected: a `pass_rate` in (0, 1); per-source maps keyed `dataset|domain`; difficulty `drops`
 containing only `all_pass`, `all_fail`, `teacher_error`; `difficulty_removed > 0`; all four
 domains present in `train_final.by_domain`; and a non-zero token share per domain.
+
+**Then look at the oracle drop rate before accepting the number.** Compute
+`(all_pass + all_fail) / difficulty_judged` and, separately, the ratio of `all_pass` to the
+judged count. The filter is spec §10.2's rejection sampling and dropping all-pass rows is
+correct behaviour — but the oracle-bearing set is only about 1,075 candidates (the 1,001
+seeds plus the maths golds), so a reasoning pass rate near 1.0 deletes nearly all of it in one
+step and leaves the corpus with almost no mechanically verified rows. That is a *recorded
+decision point*, not a bug:
+
+- below ~80% removed, ship as-is and note the rate;
+- above it, say so explicitly in the guide and decide whether to ship the all-pass rows for
+  the prompts the teacher solved. That change is **merge-only and costs no GPU time** — the
+  cache holds the completions, so re-admitting them is a re-run of `--mode difficulty`
+  followed by `--mode merge`, with no teacher calls. Do not silently ship a corpus whose
+  verified core has been filtered to a few hundred rows.
 
 Then apply spec §11.5's actual criterion, which is a tolerance rather than an eyeball:
 
