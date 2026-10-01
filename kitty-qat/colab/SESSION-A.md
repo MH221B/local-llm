@@ -19,6 +19,11 @@ Alternative (cleaner, if the repo is ever pushed to a git remote): skip the zip 
 
 ```python
 # Cell 1
+# Colab ships torchao 0.10.0; peft >= 0.21 hard-raises from is_torchao_available()
+# during LoRA injection when torchao is present but < 0.16, even though we never
+# use it. Removing it makes peft's probe return False cleanly. (Do NOT upgrade
+# torchao: 0.16+ can drag a torch/CUDA bump that breaks the Colab stack.)
+!pip uninstall -y torchao
 !pip install -q peft datasets gguf
 # -d creates the destination; the zip already nests entries under kitty-qat/
 !unzip -q -o /content/drive/MyDrive/kitty-qat.zip -d /content
@@ -28,8 +33,9 @@ Alternative (cleaner, if the repo is ever pushed to a git remote): skip the zip 
 
 ```python
 # Cell 2 — training. NOTE: 2,600 conversations yield ~4,225 windows → ~2,050
-# steps at batch 2 (~2-2.5 h). If the session cap is tight, pass a smaller
-# DATA_CONV via -e edits. Adapter checkpoint exists only at the end.
+# steps at batch 2 (~2-2.5 h). If the session cap is tight, lower the module
+# constant DATA_CONV in scripts/train_qat_colab.py (there is no CLI flag for it).
+# Adapter checkpoint exists only at the end.
 !python scripts/train_qat_colab.py --out /content/qat-lora
 ```
 

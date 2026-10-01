@@ -8,6 +8,9 @@ the merged dir is for the local Task-9 GGUF convert.
 
 ```python
 # Cell 1
+# Remove Colab's stale torchao (0.10.0): peft >= 0.21 raises on it during LoRA
+# injection (is_torchao_available) even though we never use torchao.
+!pip uninstall -y torchao
 !pip install -q peft datasets gguf
 !unzip -q -o /content/drive/MyDrive/kitty-qat.zip -d /content
 %cd /content/kitty-qat
