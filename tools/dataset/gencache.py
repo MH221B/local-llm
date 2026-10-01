@@ -4,14 +4,27 @@ Spec section 10: re-running is idempotent. Single-turn rows key on the request p
 a trajectory keys on the whole conversation prefix sent so far, so an interrupted
 trajectory resumes at its next missing turn rather than restarting.
 
-ponytail: keys cover `{kind, messages}` only. Changing a sampling parameter or the `tools`
-field between runs replays the cached completion rather than regenerating. That is fine
-while the spec fixes sampling; if a run needs a different parameter set, delete the cache.
+Concurrency-safe: `get` and `put` take a lock, so the M3 worker pool can share one cache.
+
+Reload-safe: the file is split on `\n` and an unparseable line is skipped with a count, so a
+line-separator character in a completion or a torn tail does not make hours of teacher work
+unloadable.
+
+Stores the **completion**, not the verdict: `generate_one` recomputes the verdict on every
+replay, so changing a filter or a verifier applies to the whole cache rather than only to rows
+generated after the edit.
+
+ponytail: keys cover `{kind, messages}` only. Changing a sampling parameter, the `tools`
+field, or the model between runs replays the cached completion rather than regenerating.
+That is fine while the spec fixes sampling; if a run needs a different parameter set,
+delete the cache. The lock makes writes safe, not keys unique: two workers must never be
+handed the same key, which is why every caller derives its key from the prompt's content.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from pathlib import Path
 
 
@@ -29,22 +42,45 @@ class GenCache:
     def __init__(self, path: Path):
         self.path = Path(path)
         self.records: dict[str, dict] = {}
+        self._lock = threading.Lock()
         if self.path.exists():
-            for line in self.path.read_text(encoding="utf-8").splitlines():
+            # Split on "\n" rather than `str.splitlines()`. `splitlines` also breaks on
+            # U+2028, U+2029 and \x85, which `json.dumps(ensure_ascii=False)` writes raw, so
+            # one such character inside a completion splits its record in two and makes the
+            # whole cache unloadable. Measured: `prompts/train.jsonl` in the live corpus
+            # already contains a raw U+2028, so this is a live trigger, not a hypothetical.
+            unparsed = 0
+            for line in self.path.read_text(encoding="utf-8").split("\n"):
                 line = line.strip()
-                if line:
+                if not line:
+                    continue
+                try:
                     rec = json.loads(line)
-                    self.records[rec["key"]] = rec
+                except json.JSONDecodeError:
+                    # A torn tail from a killed writer, or a line from an older format.
+                    # Skip it and say so rather than refusing to start at all.
+                    unparsed += 1
+                    continue
+                # First write wins, matching `put`: a re-run must never grow the file
+                # or change a value the run already used.
+                self.records.setdefault(rec["key"], rec)
+            if unparsed:
+                print(f"gencache: skipped {unparsed} unparseable line(s) of "
+                      f"{unparsed + len(self.records)} in {self.path}", flush=True)
 
     def get(self, key: str) -> dict | None:
-        return self.records.get(key)
+        with self._lock:
+            return self.records.get(key)
 
     def put(self, key: str, value: dict) -> None:
         rec = {"key": key, **value}
-        self.records[key] = rec
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        with self._lock:
+            if key in self.records:
+                return
+            self.records[key] = rec
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
     def __len__(self) -> int:
         return len(self.records)
@@ -64,3 +100,30 @@ if __name__ == "__main__":
     print("records after reload:", len(replay))
     print("replayed value:", replay.get(k1)["completion"]["content"])
     print("same key twice:", prefix_key([{"role": "user", "content": "hi"}], kind="k") == k1)
+
+    # Concurrency: many threads appending at once must leave the file parseable, one line
+    # per distinct key, and a re-`put` of an existing key must not add a second line.
+    import threading
+
+    many = Path(tempfile.mkdtemp()) / "many.jsonl"
+    shared = GenCache(many)
+    threads = [threading.Thread(target=lambda i=i: shared.put(f"k{i}", {"i": i}))
+               for i in range(200)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    reloaded = GenCache(many)
+    print("threaded put reload:", len(reloaded), "of 200",
+          "| malformed lines:", sum(
+              1 for line in many.read_text(encoding="utf-8").splitlines()
+              if line.strip() and "key" not in json.loads(line)))
+    before = many.stat().st_size
+    reloaded.put("k0", {"i": 999})
+    print("re-put of an existing key appends nothing:", many.stat().st_size == before)
+
+    # A line-separator character inside a value must not split the record. The corpus
+    # already contains a raw U+2028, so this is the case that matters most.
+    sep = Path(tempfile.mkdtemp()) / "sep.jsonl"
+    GenCache(sep).put("k", {"completion": {"content": f"one{chr(0x2028)}two"}})
+    print("U+2028 record reloads whole:", len(GenCache(sep)) == 1)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
 from pathlib import Path
 
 from PIL import Image
@@ -42,7 +43,11 @@ class ImageStore:
         target = self.dir_for(sha) / f"{sha}{ext}"
         target.parent.mkdir(parents=True, exist_ok=True)
         if not target.exists():
-            target.write_bytes(data)
+            # A temp name the `resolve` glob (`{sha}.*`) cannot match, then an atomic
+            # rename: no reader ever opens a half-written image.
+            tmp = target.parent / f".tmp-{target.name}"
+            tmp.write_bytes(data)
+            os.replace(tmp, target)
         return sha, w, h, str(target.relative_to(self.root))
 
     def put_pil(self, im: Image.Image) -> tuple[str, int, int, str]:

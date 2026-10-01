@@ -670,7 +670,7 @@ git push origin main
 
 Every worker in Task 3 appends to one cache file, and every worker can also write an image into the content-addressed store. Without a lock, two threads interleave a partial cache line and the cache becomes unreadable — which would silently discard hours of teacher work. And `imgstore.put` writes bytes straight to the final path, so a worker killed mid-write leaves a torn image where a later run's `Image.open(existing)` raises. This task lands first so Task 3 has something safe to write to.
 
-- [ ] **Step 1: Add the lock and first-write-wins semantics**
+- [x] **Step 1: Add the lock and first-write-wins semantics**
 
 In `tools/dataset/gencache.py`, replace the module docstring's last paragraph and the `GenCache` class with this. The docstring correction matters: the class is now called from several threads, so the "keys cover `{kind, messages}` only" note gains a concurrency clause.
 
@@ -763,7 +763,7 @@ class GenCache:
         return len(self.records)
 ```
 
-- [ ] **Step 2: Make the image store's writes atomic**
+- [x] **Step 2: Make the image store's writes atomic**
 
 Content addressing makes two workers writing the *same* image harmless, but `ImageStore.put` writes bytes straight to the final path. A write interrupted mid-flight (a killed worker, a full disk, Ctrl-C) leaves a truncated file at `images/<aa>/<sha>.<ext>`; the next run's `resolve` finds it and hands it to `Image.open`, which raises. A temp name plus `os.replace` fixes it: the final path only ever appears complete.
 
@@ -784,7 +784,7 @@ In `tools/dataset/imgstore.py`, add `import os` to the imports (it is not there 
 
 The leading dot is load-bearing: `resolve` globs `{sha}.*`, so a temp file named `{sha}{ext}.part` would still be picked up by a concurrent reader. `.tmp-` is not matched by that pattern.
 
-- [ ] **Step 3: Extend the gencache smoke to prove the concurrency claim**
+- [x] **Step 3: Extend the gencache smoke to prove the concurrency claim**
 
 Append to the existing `if __name__ == "__main__":` block in the same file, after the `print("same key twice:", ...)` line:
 
@@ -817,7 +817,7 @@ Append to the existing `if __name__ == "__main__":` block in the same file, afte
     print("U+2028 record reloads whole:", len(GenCache(sep)) == 1)
 ```
 
-- [ ] **Step 4: Smoke both changes**
+- [x] **Step 4: Smoke both changes**
 
 Run:
 
@@ -844,7 +844,7 @@ The `stored` line is the sha prefix, the image's width and height, and its path 
 
 The benign `<frozen runpy>: RuntimeWarning` is expected under `python -m` and is not a failure.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tools/dataset/gencache.py tools/dataset/imgstore.py
