@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import torch
 from transformers.cache_utils import DynamicLayer
 
-from src.quant import build_promote_mask, fake_quant_groupwise_lastdim
+from src.quant import build_promote_mask
 
 FULL_ATTENTION = "full_attention"
 
@@ -52,6 +52,8 @@ class QuantizingDynamicLayer(DynamicLayer):
         promote_bit: int = 4,
         channel_selection: int = 1,
         post_quant: bool = True,
+        quant_fn=None,
+        detach_states: bool = True,
     ):
         super().__init__()
         if channel_selection not in (0, 1):
@@ -69,6 +71,12 @@ class QuantizingDynamicLayer(DynamicLayer):
         self.promote_bit = promote_bit
         self.channel_selection = channel_selection
         self.post_quant = post_quant
+        # Spec 2 seams. Eval passes neither: quant_fn=None means the vendored
+        # quantizer and detach_states=True means Spec 1's detached clones.
+        from src.quant import fake_quant_groupwise_lastdim as _vendored
+
+        self.quant_fn = quant_fn if quant_fn is not None else _vendored
+        self.detach_states = detach_states
         # Observability for the "quantization actually happened" check.
         self.quantized_pages = 0
         self.quantized_value_blocks = 0
@@ -80,15 +88,19 @@ class QuantizingDynamicLayer(DynamicLayer):
 
     # -- lifecycle -----------------------------------------------------------------
 
+    def _clone_states(self, t):
+        """Detached in eval mode; graph-carrying in training mode."""
+        return t.detach().clone() if self.detach_states else t.clone()
+
     def _prefill(self, key_states, value_states):
         self.lazy_initialization(key_states, value_states)
-        self.keys = key_states.detach().clone()
-        self.values = value_states.detach().clone()
+        self.keys = self._clone_states(key_states)
+        self.values = self._clone_states(value_states)
         # PostQuant: the returned tensors are a snapshot taken BEFORE write-back, so the
         # current step attends to unquantized K/V and each later step lags one page.
         to_return = None
         if self.post_quant:
-            to_return = (self.keys.detach().clone(), self.values.detach().clone())
+            to_return = (self._clone_states(self.keys), self._clone_states(self.values))
 
         length = self.keys.shape[-2]
         if length <= self.sink_length:
@@ -111,15 +123,18 @@ class QuantizingDynamicLayer(DynamicLayer):
         self.values = torch.cat([self.values, value_states], dim=-2)
         to_return = None
         if self.post_quant:
-            to_return = (self.keys.detach().clone(), self.values.detach().clone())
+            to_return = (self._clone_states(self.keys), self._clone_states(self.values))
 
         length = self.keys.shape[-2]
         quantizable = length - self.sink_length - self.buffer_length
-        if quantizable > 0 and quantizable % self.buffer_length == 1:
-            self._quantize_key_page(length - self.buffer_length - 1)
         if quantizable > 0:
-            start = length - 2 * self.buffer_length - 1
-            self._quantize_values(start, start + self.buffer_length)
+            if quantizable % self.buffer_length == 1:
+                self._quantize_key_page(length - self.buffer_length - 1)
+            # KIVI-style V decays one token per decode step (the reference quantizes
+            # current_value_cache[:, :, -buffer-1:-buffer, :] -- a single token --
+            # on every step, not a whole block on K-quantization steps).
+            token_start = length - self.buffer_length - 1
+            self._quantize_values(token_start, token_start + 1)
 
         return to_return if self.post_quant else (self.keys, self.values)
 
@@ -133,7 +148,7 @@ class QuantizingDynamicLayer(DynamicLayer):
             promote_ratio=self.promote_ratio,
             channel_selection=self.channel_selection,
         )
-        page = fake_quant_groupwise_lastdim(
+        page = self.quant_fn(
             data=page,
             group_size=self.group_size,
             bit=self.kbits,
@@ -146,7 +161,7 @@ class QuantizingDynamicLayer(DynamicLayer):
     def _quantize_values(self, start: int, end: int) -> None:
         if end <= start:
             return
-        block = fake_quant_groupwise_lastdim(
+        block = self.quant_fn(
             data=self.values[:, :, start:end, :],
             group_size=self.group_size,
             bit=self.vbits,
