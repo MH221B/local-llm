@@ -2165,7 +2165,7 @@ The operative sequence is therefore: anchor the caps (this task), rebuild the pr
 
 **One cap cannot be reached at all.** The uncensored column is limited by supply, not by choice: `seeds/uncensored.jsonl` holds 2,500 rows, but the pipeline's dedup and filters keep only **1,939** of them, and Magpie invents at most one request per seed, so the candidate pool tops out at about **4,370** against a 5,000 *accepted* target. Spec §7.5 already calls this column "the tight one". Anchor for it anyway — the number records the intent — but expect a measured shortfall of roughly 12% even at a pass rate of 1.0, and record it as a shortfall rather than treating it as a bug.
 
-- [ ] **Step 1: Write the anchoring module**
+- [x] **Step 1: Write the anchoring module**
 
 Create `tools/dataset/anchor.py`:
 
@@ -2367,7 +2367,7 @@ if __name__ == "__main__":
     # checkable without waiting on M2.
 ```
 
-- [ ] **Step 2: Add a smoke with a synthetic measurement**
+- [x] **Step 2: Add a smoke with a synthetic measurement**
 
 So the arithmetic is verified without waiting on M2, replace the `__main__` block you just wrote with this complete version. The `len(sys.argv) > 1` guard follows the convention the other modules use (`magpie.py`, `audit.py`): no arguments means smoke, arguments mean the real run.
 
@@ -2425,7 +2425,7 @@ The two things this smoke is really guarding:
 - **`1049`, not `1613`.** Anchoring `coding` in isolation would give `teacher:tools` a cap of 1,613 (the whole domain requirement squeezed into a 1,000-cap source). Combined with the five prebuilt coding sources, its share is its 1,000 out of the domain's 13,000, so 1,049. The paired-table version roughly doubles coding's budget for no reason, which is the bug this smoke pins down.
 - **`41703`, not `39000`.** A pool larger than the spec's 39,000 is the intended outcome *when rates are below 1*: the spec's budget assumed prebuilt answers, so every response being teacher-written with a sub-1 pass rate grows the candidate pool by roughly `1/pass_rate`. With no rate below its domain threshold, nothing grows and the pool stays `39000` — which is what M2's data gives. The `45460` in the `driver flags` line is neither: it is `max_d(need_d / share_d)`, the smallest `--target-train` whose 30/30/20/20 split still funds every domain's anchored cap.
 
-- [ ] **Step 3: Run it against the real M2 measurement**
+- [x] **Step 3: Run it against the real M2 measurement**
 
 The no-argument form runs the smoke, so pass `--manifest` explicitly to reach `main`:
 
@@ -2437,7 +2437,7 @@ Expected, on M2's manifest as it stands: the measured rates and the attempts beh
 
 If it does print a table (phase 2, after the measurement): a `<- change` mark means that cap grew; `per-domain anchored caps` is the number `allocate` cannot see; and the flags block's `--target-train` is `max_d(need_d / share_d)`, not the sum of the caps. Copy all five flag values into Task 7 Step 2 and Task 8 Step 3 — they go stale the moment one is changed without the others. If a domain's rate is 0, stop: `candidates_for` raises, and a genuine 0 means that source produced nothing usable — a measurement to discuss, not a number to paper over.
 
-- [ ] **Step 4: Edit the caps, recording the anchor**
+- [x] **Step 4: Edit the caps, recording the anchor**
 
 In `tools/dataset/sources.py`, update both tables with the anchored numbers. Extend `Source` so the anchoring is auditable rather than a bare integer — the M2 pass rate a cap was derived from belongs next to the cap:
 
@@ -2467,7 +2467,7 @@ TEACHER_SOURCES: list[Source] = [
 
 (Those are Step 2's worked-example rates, not the values to ship. Ship the values step 3 printed, and the same for the prebuilt table. `anchored_on` is documentation: nothing reads it at runtime, so it is worth keeping only for the next person wondering where `8065` came from.)
 
-- [ ] **Step 5: Assert the pool still covers the target**
+- [x] **Step 5: Assert the pool still covers the target**
 
 Extend `sources.py`'s `__main__` so the smoke fails loudly if the re-anchored pool cannot deliver the spec's mix:
 
@@ -2503,7 +2503,7 @@ Two things to read carefully, because both are easy to misread as failures:
 
 Note what the assert does and does not prove. It proves the pool still covers the spec's budget; it does *not* prove the pool can be filled: `SOURCES` caps are maxima per source, and the pipeline's `WARNING: short of target` line in Task 7 Step 2 is where a source that cannot reach its cap shows up — for `uncensored`, whose ceiling is 4,370 candidates rather than the 5,000 the earlier draft assumed.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add tools/dataset/anchor.py tools/dataset/sources.py
