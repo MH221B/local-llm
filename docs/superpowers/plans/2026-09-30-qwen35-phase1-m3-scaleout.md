@@ -2619,11 +2619,15 @@ smoltalk everyday-conversations -> 1500
 trajectory prompts: 6119 (simulated: 0)
 ```
 
-`tool-carrying: 356`, `invalid trajectories: 0`, by domain coding 3,119 / roleplay 3,000. The cap raise is what bought this: M2's 2,800-cap table produced 170 rows, so the step would have shipped a 39,000-prompt corpus with 170 prebuilt multi-turn rows in it.
+`invalid trajectories: 0`, by domain coding 3,119 / roleplay 3,000. The cap raise is what bought this: M2's 2,800-cap table produced 170 rows, so this step would otherwise have shipped a 39,000-prompt corpus with 170 prebuilt multi-turn rows in it.
 
-The hermes configs are the shortfall, and it is a data-shape fact, not a cap bug. Both hold 1,893 rows. `build_hermes` accepts 927 and 1,100 of them respectively, but `validate_trajectory` requires every `tool_call` to be answered by a `tool` message, and `func_calling_singleturn`'s conversations *end* on the assistant's call — so 1,090 of its 1,100 built trajectories are rejected with `call '<id>' has no tool result`, leaving 10. `func_calling` keeps 346. Hermes therefore supplies 356 of its 3,000 cap, and ToolACE's 2,763 carry the coding column to 3,119.
+**`tool-carrying` is the number to read here, not the domain split, and it took a second pass to get right.** The first run reported **356**, every one of them hermes, because `_toolace_schema` was dropping *all* of ToolACE's schemas. It sliced `system[first '[' : last ']']` and ran `json.loads` over it, but a ToolACE system prompt carries further bracket groups after the function list, so the parse failed with `Extra data` on every row and 2,763 tool-calling trajectories were written with `tools=None`. Their calls survived — 2,280 parse from the `[Name(args)]` DSL — so the rows looked tool-ish while declaring nothing, and nothing errors: the loss is only visible if `tools` is counted separately from `domain`.
 
-Recorded rather than fixed: whether an unanswered final tool call is a valid trajectory is a spec section 5.1 question about what a trajectory *is*, and the same rule is enforced at generation time (`trajectory.py`), so widening it is not a Task 7 edit. It costs no coding candidates here because ToolACE covers the column; it would matter if ToolACE were ever the thin one.
+Parsing the first JSON value with `json.JSONDecoder().raw_decode` recovers 2,456 of the first 3,000 rows. The re-run gives `tool-carrying: 2,398` (ToolACE 2,042, hermes 356). That is a 6.7x swing in the pool `run_simulated` draws its seeds from — it seeds only from `t.tools` — so the bug would have cut the simulated loop's seed set to a sixth with no error anywhere.
+
+The hermes configs are the remaining shortfall, and it is a data-shape fact, not a cap bug. Both hold 1,893 rows. `build_hermes` accepts 927 and 1,100 of them respectively, but `validate_trajectory` requires every `tool_call` to be answered by a `tool` message, and `func_calling_singleturn`'s conversations *end* on the assistant's call — so 1,090 of its 1,100 built trajectories are rejected with `call '<id>' has no tool result`, leaving 10. `func_calling` keeps 346. Hermes therefore supplies 356 of its 3,000 cap, and ToolACE's 2,042 carry the pool.
+
+Recorded rather than fixed: whether an unanswered final tool call is a valid trajectory is a spec section 5.1 question about what a trajectory *is*, and the same rule is enforced at generation time (`trajectory.py`), so widening it is not a Task 7 edit. With ToolACE's schemas recovered it costs the pool little.
 
 - [ ] **Step 4: Re-invent the Magpie pools at scale**
 

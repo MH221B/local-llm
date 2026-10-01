@@ -179,14 +179,22 @@ def _toolace_calls(text: str) -> list[dict] | None:
 
 
 def _toolace_schema(system: str) -> list | None:
-    """Extract the embedded JSON function list and wrap it in the OpenAI shape."""
+    """Extract the embedded JSON function list and wrap it in the OpenAI shape.
+
+    Parse the first JSON value at or after the first '[', *not* the slice from the first
+    '[' to the last ']'. The system prompt carries further bracket groups after the function
+    list, so the slice form raises `Extra data` on every ToolACE row and strips `tools` from
+    all of them — 2,456 of the first 3,000 rows recover with `raw_decode`, and with the slice
+    the multi-turn tool-carrying pool collapses to the hermes rows alone.
+    """
     start = system.find("[")
-    end = system.rfind("]")
-    if start < 0 or end <= start:
+    if start < 0:
         return None
     try:
-        raw = json.loads(system[start:end + 1])
+        raw, _end = json.JSONDecoder().raw_decode(system, start)
     except json.JSONDecodeError:
+        return None
+    if not isinstance(raw, list):
         return None
     tools = []
     for entry in raw:
