@@ -1,2 +1,5 @@
 torch
 transformers>=5.8,<6
+peft
+datasets
+gguf
