@@ -83,32 +83,41 @@ def _completion_example(prompt, content: str, tool_calls: list) -> Example:
                    tokens=tokens, meta=dict(prompt.meta))
 
 
-def generate_one(prompt, client, cache, *, store, thinking: bool) -> dict:
-    """One cached single-turn completion, verified and filtered. Cached value is the verdict.
+def generate_one(prompt, client, cache, *, store, thinking: bool, rollout: int = 0) -> dict:
+    """One cached completion, verified and filtered. The verdict is recomputed every run.
 
-    Every verdict carries its `example`, `verify_failed` included: a drop whose completion
-    is not stored cannot be audited.
+    The cache holds the *completion*, not the verdict. Recomputing costs a local `verify`
+    call (milliseconds) and is the difference between a filter or verifier edit applying to
+    the whole cache and applying only to rows generated after it — this plan defers one such
+    edit (`error_laden`), and mixing old-code rollout 0 with new-code rollout 1 would
+    otherwise decide the difficulty verdict with two different rules.
+
+    `rollout` 0 keeps M2's key, so an existing cache replays and the difficulty filter only
+    pays for rollouts 1..K-1 (spec section 10.2).
     """
-    key = gencache.prefix_key(prompt.messages, kind=f"single:{prompt.id}")
+    kind = f"single:{prompt.id}" if rollout == 0 else f"single:{prompt.id}:r{rollout}"
+    key = gencache.prefix_key(prompt.messages, kind=kind)
     cached = cache.get(key)
-    if cached is not None:
-        return cached
-    msg = client.complete(prompt.messages, store=store, tools=prompt.tools,
-                          thinking=thinking, seed=_seed(key))
-    content = msg.get("content") or ""
-    tool_calls = msg.get("tool_calls") or []
-    ex = _completion_example(prompt, content, tool_calls)
+    stale = cached is not None and "completion" not in cached
+    if cached is None or stale:
+        # The `stale` half is what retires M2's verdict-shaped entries: they hold
+        # `accepted`/`reason`/`example` with no completion to re-verify, so they are
+        # regenerated once (and `put` is told to upgrade them, or the entry would be
+        # regenerated again on every run and never persisted).
+        msg = client.complete(prompt.messages, store=store, tools=prompt.tools,
+                              thinking=thinking, seed=_seed(key))
+        cached = {"completion": {"content": msg.get("content") or "",
+                                 "tool_calls": msg.get("tool_calls") or []}}
+        cache.put(key, cached, upgrade=stale)
+    content = cached["completion"]["content"]
+    ex = _completion_example(prompt, content, cached["completion"]["tool_calls"])
     if prompt.verify:
         ok, why = verify.check_record(prompt.verify, content)
         if not ok:
-            cached = {"accepted": False, "reason": "verify_failed", "detail": why,
-                      "example": ex.to_dict()}
-            cache.put(key, cached)
-            return cached
+            return {"accepted": False, "reason": "verify_failed", "detail": why,
+                    "example": ex.to_dict()}
     reason = filters.example_reject_reason(ex)
-    cached = {"accepted": reason is None, "reason": reason, "example": ex.to_dict()}
-    cache.put(key, cached)
-    return cached
+    return {"accepted": reason is None, "reason": reason, "example": ex.to_dict()}
 
 
 def _run_pool(pool: Path, limit: int | None, client, cache, *, root, store, thinking, stats,
@@ -170,6 +179,92 @@ def run_seeded(*, root: Path, client, cache, limit: int | None, val_limit: int |
     canonical.write_jsonl(root / "m2" / "val.jsonl", val)
     _dump_stats(root / "m2" / "seeded.stats.json", stats)
     print(f"seeded: accepted {stats['accepted']} of {stats['attempted']}", flush=True)
+    return stats
+
+
+DIFFICULTY_K = 2
+ACCEPTED_TRAIN_TARGET = 25_000   # spec section 4; merge trims to it when the filters do not
+
+
+def run_difficulty(*, root: Path, client, cache, k: int = DIFFICULTY_K,
+                   limit: int | None = None, thinking: bool = True, concurrency: int = 1):
+    """Spec section 10.2 rejection sampling over oracle-bearing prompts.
+
+    Keeps a prompt only when the teacher passes some rollouts and fails others. Rollout 0
+    reuses M2's cache key, so a warm cache costs only the extra rollouts.
+
+    Writes the survivors *and* a verdict line for every judged prompt. Merge filters against
+    the verdicts, not the survivors: an all-fail prompt is absent from the survivors but
+    present in the corpus from the seeded pass, and only the verdicts name it.
+
+    `verify` is the oracle, so a prompt without one is out of scope: "all-pass" is
+    meaningless for a column with no mechanical test.
+    """
+    store = ImageStore(root / "images")
+    stats = {"attempted": 0, "accepted": 0, "k": k, "by_domain": Counter(),
+             "attempted_by_source": Counter(), "accepted_by_source": Counter(),
+             "drops": Counter()}
+    records = []
+    for rel in TRAIN_POOLS:
+        path = root / rel
+        if path.exists():
+            records.extend(p for p in (prompt_from_dict(r) for r in iter_jsonl(path))
+                           if p.verify)
+    if limit is not None:
+        records = split.downsample(records, limit)
+
+    def work(prompt):
+        rollouts = []
+        for i in range(k):
+            try:
+                rollouts.append(generate_one(prompt, client, cache, store=store,
+                                             thinking=thinking, rollout=i))
+            except TeacherError as exc:
+                return rollouts, exc
+        return rollouts, None
+
+    out: list[Example] = []
+    verdicts: list[dict] = []
+    for done, (prompt, (rollouts, exc)) in enumerate(zip(records, _map(
+            work, records, concurrency)), start=1):
+        key = _source_key(prompt)
+        stats["attempted"] += 1
+        stats["attempted_by_source"][key] += 1
+        if exc is not None or len(rollouts) < k:
+            stats["drops"]["teacher_error"] += 1
+            verdicts.append({"id": prompt.id, "verdict": "teacher_error",
+                             "source": key, "passes": None})
+            print(f"  teacher error on {prompt.id}: {exc}", flush=True)
+        else:
+            passes = [r for r in rollouts if r["accepted"]]
+            if len(passes) == k:
+                stats["drops"]["all_pass"] += 1
+                verdicts.append({"id": prompt.id, "verdict": "all_pass", "source": key,
+                                 "passes": k})
+            elif not passes:
+                stats["drops"]["all_fail"] += 1
+                verdicts.append({"id": prompt.id, "verdict": "all_fail", "source": key,
+                                 "passes": 0})
+            else:
+                out.append(canonical.example_from_dict(passes[0]["example"]))
+                stats["accepted"] += 1
+                stats["by_domain"][prompt.domain] += 1
+                stats["accepted_by_source"][key] += 1
+                verdicts.append({"id": prompt.id, "verdict": "keep", "source": key,
+                                 "passes": len(passes)})
+        _progress("difficulty", done, len(records), stats, every=50)
+    canonical.write_jsonl(root / "m2" / "difficulty.jsonl", out)
+    # The first line is a fingerprint, not a verdict. `run_merge` refuses to filter against a
+    # file written for a different set of oracle prompts, which is what makes a *partial*
+    # difficulty pass (or a rebuilt corpus) fail loudly instead of silently un-filtering: a
+    # `--limit 12` verdict file would otherwise re-admit every row the full pass had dropped.
+    meta = {"kind": "meta", "k": k, "judged": len(verdicts), "oracle_in_pools": len(records)}
+    (root / "m2" / "difficulty.verdicts.jsonl").write_text(
+        "".join(json.dumps(v, ensure_ascii=False) + "\n" for v in [meta, *verdicts]),
+        encoding="utf-8")
+    _dump_stats(root / "m2" / "difficulty.stats.json", stats)
+    print(f"difficulty: accepted {stats['accepted']} of {stats['attempted']} judged "
+          f"(k={k}, drops {dict(stats['drops'])})", flush=True)
     return stats
 
 
@@ -252,67 +347,101 @@ def run_trajectory(*, root: Path, client, cache, limit: int | None, thinking: bo
 def run_simulated(*, root: Path, client, cache, limit: int | None, thinking: bool = True,
                   concurrency: int = 1):
     """Simulated trajectories (spec section 5.1): the teacher plays user, agent, and tool
-    environment, seeded from the real first user turns and tool schemas of the prebuilt
-    trajectory prompts. Rows carry `meta.simulated = true`."""
+    environment. Seeded two ways: from a prebuilt trajectory's own first user turn, and from
+    a tool schema with no conversation at all, where the request comes from the schema
+    (spec section 10.2). Rows carry `meta.simulated = true`."""
+    from types import SimpleNamespace
+
     store = ImageStore(root / "images")
     stats = _traj_stats()
-    path = root / "prompts" / "trajectories.jsonl"
-    seeds = [t for t in (trajectory_from_dict(r) for r in iter_jsonl(path))
-             if t.tools] if path.exists() else []
-    if limit is not None:
-        seeds = split.downsample(seeds, limit)
-    # A seed with no first user turn is skipped here, in the main thread, so it never
-    # reaches `work`: a seed's shape is a prompt property, not a teacher result, and this
-    # keeps the skip out of the concurrent path.
-    prepared = []
-    for seed in seeds:
-        first_user = next((canonical.message_text(m) for m in seed.messages
+    stats["schema_seeded"] = 0
+
+    prepared: list[tuple] = []
+    traj_path = root / "prompts" / "trajectories.jsonl"
+    traj_seeds = [t for t in (trajectory_from_dict(r) for r in iter_jsonl(traj_path))
+                  if t.tools] if traj_path.exists() else []
+    for t in traj_seeds:
+        first_user = next((canonical.message_text(m) for m in t.messages
                            if m.get("role") == "user"), "")
         if first_user:
-            prepared.append((seed, first_user))
+            # `sim-` matters: the raw id is the trajectory prompt's id, which
+            # `m2/trajectory.jsonl` already uses, and `run_merge` concatenates both shards.
+            prepared.append((f"sim-{t.id}", t.domain, dict(t.source), t.tools, first_user,
+                             False))
 
-    def work(item):
-        seed, first_user = item
+    # Schema-seeded seeds. The Magpie row's own user turn *is* the schema-conditioned
+    # request Task 4 invented, so it is passed straight through as `first_user` rather than
+    # re-invented: `generate_simulated`'s own invention path uses a canned prompt and never
+    # sees the row's `tools`, so re-inventing there would drop the schema from the loop
+    # (spec section 10.2 asks for a user turn invented *from* a tool schema).
+    mag_path = root / "prompts" / "magpie.jsonl"
+    for row in (iter_jsonl(mag_path) if mag_path.exists() else []):
+        if not row.get("tools") or not row.get("meta", {}).get("schema_seeded"):
+            continue
+        first_user = next((canonical.message_text(m) for m in row.get("messages", [])
+                           if m.get("role") == "user"), "")
+        if not first_user:
+            continue
+        prepared.append((f"sim-schema-{row['id']}", row["domain"],
+                         {"name": "teacher:simulated:schema"}, row["tools"], first_user,
+                         True))
+
+    # `--sim-limit` bounds the whole simulated pool, so it is applied once, after both
+    # sources are pooled. It is deliberately *not* applied to `traj_seeds` above: doing both
+    # would downsample the prebuilt rows twice while the schema rows are capped once, and
+    # the prebuilt:schema mix would skew. `downsample` reads only `.domain`, hence the wrapper.
+    wrapped = [SimpleNamespace(domain=item[1], item=item, id=item[0]) for item in prepared]
+    if limit is not None:
+        wrapped = split.downsample(wrapped, limit)
+    schema_count = sum(1 for w in wrapped if w.item[5])
+    stats["schema_seeded"] = schema_count
+    print(f"simulated seeds: {len(wrapped)} ({schema_count} schema-seeded)", flush=True)
+
+    def work(w):
+        sid, domain, source, tools, first_user, _schema = w.item
         try:
             return trajectory.generate_simulated(
-                client, cache, id=f"sim-{seed.id}", domain=seed.domain,
-                source={"name": "teacher:simulated"}, tools=seed.tools,
+                client, cache, id=sid, domain=domain, source=source, tools=tools,
                 first_user=first_user, thinking=thinking, store=store), None
         except TeacherError as exc:
             return None, exc
 
     out = []
-    for done, ((seed, _first_user), (traj, exc)) in enumerate(zip(
-            prepared, _map(work, prepared, concurrency)), start=1):
-        key = f"teacher:simulated|{seed.domain}"
+    for done, (w, (traj, exc)) in enumerate(zip(wrapped, _map(
+            work, wrapped, concurrency)), start=1):
+        sid, domain, source, tools, first_user, schema_seeded = w.item
+        key = f"teacher:simulated|{domain}"
+        # The reject ledger names the pool the row came from, so a schema-seeded drop is
+        # distinguishable from a prebuilt-seeded one.
+        pool = ("prompts/magpie.jsonl" if schema_seeded else "prompts/trajectories.jsonl")
         stats["attempted"] += 1
         stats["attempted_by_source"][key] += 1
         if exc is not None:
             stats["drops"]["teacher_error"] += 1
-            print(f"  teacher error on {seed.id}: {exc}", flush=True)
+            print(f"  teacher error on {sid}: {exc}", flush=True)
             _record_reject(root, stage="simulated", reason="teacher_error", detail=str(exc),
-                           pool="prompts/trajectories.jsonl", id=f"sim-{seed.id}")
+                           pool=pool, id=sid)
         elif traj is None:
             stats["drops"]["turn_structure"] += 1
             _record_reject(root, stage="simulated", reason="turn_structure",
-                           pool="prompts/trajectories.jsonl", id=f"sim-{seed.id}")
+                           pool=pool, id=sid)
         else:
             reason, detail = _trajectory_reject(traj)
             if reason:
                 stats["drops"][reason] += 1
                 _record_reject(root, stage="simulated", reason=reason, detail=detail,
-                               pool="prompts/trajectories.jsonl", id=f"sim-{seed.id}",
-                               record=traj.to_dict())
+                               pool=pool, id=sid, record=traj.to_dict())
             else:
                 out.append(traj)
                 stats["accepted"] += 1
-                stats["by_domain"][seed.domain] += 1
+                stats["by_domain"][domain] += 1
                 stats["accepted_by_source"][key] += 1
                 stats["simulated"] += 1
-        _progress("simulated", done, len(prepared), stats, every=25)
+        _progress("simulated", done, len(wrapped), stats, every=25)
     canonical.write_jsonl(root / "m2" / "simulated.jsonl", out)
     _dump_stats(root / "m2" / "simulated.stats.json", stats)
-    print(f"simulated: accepted {stats['accepted']} of {stats['attempted']}", flush=True)
+    print(f"simulated: accepted {stats['accepted']} of {stats['attempted']} "
+          f"({schema_count} schema-seeded)", flush=True)
     return stats
 
 
@@ -338,6 +467,40 @@ def run_merge(*, root: Path) -> dict:
         return [canonical.example_from_dict(r) for r in iter_jsonl(p)] if p.exists() else []
 
     train = load("single.jsonl") + load("trajectory.jsonl") + load("simulated.jsonl")
+    survivors = load("difficulty.jsonl")
+    verdicts_path = root / "m2" / "difficulty.verdicts.jsonl"
+    judged: list[dict] = []
+    meta: dict = {}
+    if verdicts_path.exists():
+        rows = [json.loads(line) for line in
+                verdicts_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        meta = next((r for r in rows if r.get("kind") == "meta"), {})
+        judged = [r for r in rows if r.get("kind") != "meta"]
+    if judged:
+        # Guard first, filter second. A verdict file covering a subset of the oracle prompts
+        # re-admits every row the full pass had dropped and drops the survivors it never saw,
+        # and nothing else in the pipeline would notice.
+        current_oracle = sum(1 for rel in TRAIN_POOLS if (root / rel).exists()
+                             for r in iter_jsonl(root / rel) if prompt_from_dict(r).verify)
+        if meta.get("oracle_in_pools") != current_oracle:
+            raise SystemExit(
+                f"{verdicts_path} was written for {meta.get('oracle_in_pools')} oracle "
+                f"prompts but the pools hold {current_oracle}; re-run `--mode difficulty` "
+                f"(idempotent and cache-backed) before merging")
+        # The filter's decision replaces the seeded row, whatever that decision was:
+        # `keep` contributes the survivor, `all_pass` and `all_fail` contribute nothing.
+        # A `teacher_error` left no verdict, so its seeded row stands; that keeps an
+        # interrupted endpoint from silently shrinking the corpus.
+        decided = {v["id"] for v in judged if v["verdict"] != "teacher_error"}
+        train = [ex for ex in train if ex.id not in decided] + survivors
+    if not train:
+        raise SystemExit("merge produced no train rows; refusing to overwrite train.jsonl")
+    accepted_before = len(train)
+    if len(train) > ACCEPTED_TRAIN_TARGET:
+        # Spec section 13: "filter down to 25,000 rather than capping at 25,000". When pass
+        # rates come in high the filters do not reduce the count, and section 4's mix is what
+        # the trim holds -- `downsample` weights by DOMAIN_SHARE, which is 30/30/20/20.
+        train = split.downsample(train, ACCEPTED_TRAIN_TARGET)
     val = load("val.jsonl")
     canonical.write_jsonl(root / "train.jsonl", train)
     canonical.write_jsonl(root / "val.jsonl", val)
@@ -348,6 +511,12 @@ def run_merge(*, root: Path) -> dict:
 
     m2 = {"seeded": stats("seeded.stats.json"), "trajectory": stats("trajectory.stats.json"),
           "simulated": stats("simulated.stats.json"),
+          "difficulty": stats("difficulty.stats.json"),
+          "accepted_before_trim": accepted_before,
+          "difficulty_judged": len(judged),
+          "difficulty_shipped": len(survivors),
+          "difficulty_removed": len([v for v in judged
+                                     if v["verdict"] not in ("keep", "teacher_error")]),
           "train_written": len(train), "val_written": len(val)}
     shards = ("seeded", "trajectory", "simulated")
     passed = sum(m2[k].get("accepted", 0) for k in shards)
@@ -372,6 +541,8 @@ def run_all(*, root: Path, client, cache, limit: int | None, val_limit: int | No
                schema_limit=schema_limit)
     run_seeded(root=root, client=client, cache=cache, limit=limit, val_limit=val_limit,
                thinking=thinking, concurrency=concurrency)
+    run_difficulty(root=root, client=client, cache=cache, k=DIFFICULTY_K,
+                   thinking=thinking, concurrency=concurrency)
     run_trajectory(root=root, client=client, cache=cache, limit=multi_limit, thinking=thinking,
                    concurrency=concurrency)
     run_simulated(root=root, client=client, cache=cache, limit=sim_limit, thinking=thinking,
@@ -414,8 +585,55 @@ def smoke() -> int:
     print("smoke rejected:", len(rejected),
           "| reason:", rejected[0]["reason"] if rejected else None,
           "| completion kept:", has_completion)
-    ok = (stats["accepted"] == 1 and len(rejected) == 1
-          and rejected[0]["reason"] == "verify_failed" and has_completion)
+
+    class FlakyTeacher:
+        """Passes the odd-numbered call, fails the even-numbered one.
+
+        With `k=2` and one prompt that is one pass and one fail: the mixed verdict the
+        filter is supposed to keep.
+        """
+
+        def __init__(self, always_fail: bool = False):
+            self.calls = 0
+            self.always_fail = always_fail
+
+        def complete(self, messages, **kw):
+            self.calls += 1
+            # Code inside a fence, prose outside it. `verify.extract_code` with no fence
+            # returns the whole completion, so prose in the same string reaches `exec` and
+            # raises SyntaxError: every rollout fails the oracle and the "mixed" case
+            # silently becomes an all-fail case instead of exercising the filter.
+            good = ("```python\ndef add(a, b):\n    return a + b\n```\n\n"
+                    "The function sums its two arguments and returns the result, so "
+                    "add(1, 2) is 3.")
+            bad = ("```python\ndef add(a, b):\n    return a - b\n```\n\n"
+                   "This version subtracts the second argument from the first and returns "
+                   "that value instead.")
+            return {"content": bad if (self.always_fail or self.calls % 2 == 0) else good}
+
+    def diff_case(teacher, name):
+        dtmp = Path(tmp) / f"diff-{name}"
+        canonical.write_jsonl(dtmp / "prompts" / "train.jsonl", [Prompt(
+            id="d1", domain="coding", origin="prebuilt", source={"name": "smoke"},
+            messages=[{"role": "user", "content": [{"type": "text", "text": "Write add."}]}],
+            verify={"type": "python_tests", "setup": "",
+                    "tests": ["assert add(1, 2) == 3"]})])
+        st = run_difficulty(root=dtmp, client=teacher,
+                            cache=GenCache(dtmp / "m2" / "cache.jsonl"), k=2,
+                            concurrency=1)
+        print(f"difficulty {name}: accepted {st['accepted']} "
+              f"drops {dict(st['drops'])}", flush=True)
+        return st
+
+    mixed = diff_case(FlakyTeacher(), "mixed")
+    failed = diff_case(FlakyTeacher(always_fail=True), "all-fail")
+
+    ok = (stats["accepted"] == 1
+          and len(rejected) == 1
+          and rejected[0]["reason"] == "verify_failed" and has_completion
+          and mixed["accepted"] == 1 and not dict(mixed["drops"])
+          and failed["accepted"] == 0 and failed["drops"]["all_fail"] == 1
+          and validate(canonical.example_from_dict(first)) == [])
     return 0 if ok else 1
 
 
@@ -427,7 +645,7 @@ def main(argv: list[str] | None = None) -> int:
     except (AttributeError, ValueError):        # not a TextIOWrapper (e.g. under pytest)
         pass
     ap = argparse.ArgumentParser(description="M2 teacher generation")
-    ap.add_argument("--mode", choices=["all", "merge"], default="all")
+    ap.add_argument("--mode", choices=["all", "merge", "difficulty"], default="all")
     ap.add_argument("--root", type=Path, default=Path("datasets/qwen35-4b-sft"))
     ap.add_argument("--base-url", default="http://127.0.0.1:8086")
     ap.add_argument("--model", default="local-teacher")
@@ -479,6 +697,11 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         raise SystemExit(f"teacher endpoint {args.base_url} is unhealthy: {exc}")
     if args.mode == "merge":
+        run_merge(root=args.root)
+        return 0
+    if args.mode == "difficulty":
+        run_difficulty(root=args.root, client=client, cache=cache, k=DIFFICULTY_K,
+                       limit=args.limit, concurrency=args.concurrency)
         run_merge(root=args.root)
         return 0
     run_all(root=args.root, client=client, cache=cache, limit=args.limit,
