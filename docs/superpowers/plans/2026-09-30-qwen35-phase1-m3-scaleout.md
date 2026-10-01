@@ -118,10 +118,12 @@ the menu bar is where you pick hardware and stop the machine.
    from google.colab import drive
    drive.mount("/content/drive")
    ```
-3. Run the launcher cell. The tokenizer repo is fixed for this teacher — Task 1 Step 5 read it out of the GGUF:
+3. Run the launcher cell. The engine is `llama-cpp` and the tokenizer repo is fixed for this
+   teacher — Task 1 Step 5 read it out of the GGUF. vLLM cannot serve this checkpoint; see
+   Troubleshooting.
 
    ```
-   !python /content/serve_teacher.py --tokenizer XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B
+   !python /content/serve_teacher.py --engine llama-cpp --tokenizer XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B
    ```
 
    Copy the `trycloudflare.com` URL it prints. That URL is the teacher's address for this
@@ -158,8 +160,19 @@ the menu bar is where you pick hardware and stop the machine.
   cannot run inside the `!python` subprocess.
 - `CUDA out of memory` on load — another runtime is still alive. **Runtime → Manage
   sessions**, terminate the others, retry.
-- The launcher exits with a weight-mapping error — the GGUF plugin could not map this
-  architecture. Re-run with `--engine llama-cpp`.
+- The launcher exits with `Unknown gguf model_type: qwen3_5` — vLLM's GGUF plugin cannot map
+  this checkpoint. `vllm-gguf-plugin` 0.0.5 is the newest release and upstream issue
+  vllm-project/vllm#38122 is still open; supplying the missing name mapping only reaches a
+  second wall, because this checkpoint's vision config carries `depth` where the loader reads
+  `num_hidden_layers`. Vision is not optional (spec section 7.6 is 12% of the corpus), so that
+  path is out. Use `--engine llama-cpp`: same weights, same projector, same chat template, and
+  it is the engine M2 actually ran.
+- `-c`/`-np` are one trade-off and llama-server splits the context evenly across slots, so
+  `n_ctx_slot = ctx_size / slots`. Throughput is roughly 45 t/s per slot, so slots is the
+  speed lever and per-row context is its price. Do not let a slot fall below ~8192: the
+  reasoning backstop alone is 6144 tokens, and a row that overruns its slot is truncated
+  rather than rejected, which is a silent quality loss. Defaults are 262144 / 16 (16384 per
+  row, ~700 t/s); `--slots 32` doubles that and halves the context to 8192 per row.
 - The launcher exits with `image canary failed` — the engine cannot see images. On vLLM that
   means the projector was not picked up; re-run with `--engine llama-cpp`. Do not continue
   with a text-only server.
@@ -295,14 +308,22 @@ def serve_vllm(tokenizer: str) -> subprocess.Popen:
     return subprocess.Popen(cmd, shell=True, env=os.environ)
 
 
-def serve_llama_cpp() -> subprocess.Popen:
+def serve_llama_cpp(ctx_size: int, slots: int) -> subprocess.Popen:
     """Fallback: same weights and projector, no continuous batching. Spec section 10.
 
-    The flags after `-np 8` are not optional. `--jinja` is what makes llama-server apply the
+    The flags after `-np` are not optional. `--jinja` is what makes llama-server apply the
     GGUF's own chat template, which is where `enable_thinking` and a request's `tools` schema
     are injected; without it the reasoning and tools canaries cannot pass, and the rows would
     come back shaped differently from M2's. The three `--reasoning-*` flags are M2's measured
     serving line, kept identical so the pass rates stay comparable across engines.
+
+    `-c` and `-np` are one trade-off, because the server splits the context evenly across
+    slots: `n_ctx_slot = ctx_size / slots`. Decode is weight-bound, so aggregate throughput is
+    roughly `tokens_per_second_per_slot x slots`, which makes slots the throughput lever and
+    the per-row context its price. Measured on the L4 with `-c 32768 -np 8`: 44.7 t/s per slot
+    (~350 t/s aggregate) and only **4096 tokens per row** — less than the 6144-token reasoning
+    backstop below, so long rows would have truncated silently. The defaults give 16384 per
+    row; `--slots 32` roughly doubles throughput and halves that to 8192.
     """
     sh("git clone -q --depth 1 https://github.com/ggml-org/llama.cpp /content/llama.cpp "
        "|| true")
@@ -313,10 +334,12 @@ def serve_llama_cpp() -> subprocess.Popen:
            f"-m {shlex.quote(str(LOCAL_MODELS / TEXT_GGUF))} "
            f"--mmproj {shlex.quote(str(LOCAL_MODELS / MMPROJ_GGUF))} "
            f"--alias {SERVED_NAME} --host 127.0.0.1 --port {PORT} "
-           f"--api-key $TEACHER_API_KEY -ngl 99 -fa on -c 32768 -np 8 "
+           f"--api-key $TEACHER_API_KEY -ngl 99 -fa on "
+           f"-c {ctx_size} -np {slots} "
            f"--jinja --reasoning-format deepseek --reasoning-preserve "
            f"--reasoning-budget 6144")
-    print("launching llama.cpp (GPU build takes ~15 minutes the first time)", flush=True)
+    print(f"launching llama.cpp: {slots} slots x {ctx_size // slots} ctx tokens "
+          f"(GPU build takes ~15 minutes the first time)", flush=True)
     return subprocess.Popen(cmd, shell=True, env=os.environ)
 
 
@@ -457,6 +480,15 @@ def open_tunnel() -> subprocess.Popen:
 def main() -> int:
     ap = argparse.ArgumentParser(description="serve the M3 teacher on Colab")
     ap.add_argument("--engine", choices=["vllm", "llama-cpp"], default="vllm")
+    ap.add_argument("--ctx-size", type=int, default=262144,
+                    help="llama.cpp only: total context, divided evenly across --slots. "
+                         "262144 is ~8 GiB of KV at 32 KiB/token, which is what the L4 holds "
+                         "alongside the 5.34 GB of weights. vLLM ignores this and uses its "
+                         "own --max-model-len.")
+    ap.add_argument("--slots", type=int, default=16,
+                    help="llama.cpp only: parallel sequences. Throughput is ~45 t/s x slots; "
+                         "each slot gets ctx-size/slots tokens. 16 -> 16384 per row, "
+                         "32 -> 8192 per row at about twice the speed.")
     ap.add_argument("--tokenizer", default=None,
                     help="HF repo whose tokenizer matches the GGUF; see Task 1 Step 5. vLLM "
                          "needs it because converting a tokenizer out of a GGUF is lossy. "
@@ -477,7 +509,8 @@ def main() -> int:
     mount_drive()
     stage_weights()
 
-    proc = serve_vllm(args.tokenizer) if args.engine == "vllm" else serve_llama_cpp()
+    proc = (serve_vllm(args.tokenizer) if args.engine == "vllm"
+            else serve_llama_cpp(args.ctx_size, args.slots))
     try:
         wait_for_health(proc)
         if not smoke():
@@ -603,7 +636,19 @@ $reply = Invoke-RestMethod -Uri "$env:TEACHER_URL/v1/chat/completions" -Method P
 
 Expected: a reply of a few thousand characters that takes **more than 100 seconds** and still returns. If it fails with a 5xx around the 100-second mark, the request is not streaming: the driver must send `"stream": true` and read SSE (Task 3 Step 1), because no timeout or retry setting can hold a non-streamed request open past Cloudflare's edge limit. Verify this here, not in Task 8 — it is the difference between a corpus and a corpus-shaped file of `teacher_error` rows.
 
-4. If vLLM failed to map the architecture, re-run as `!python /content/serve_teacher.py --engine llama-cpp --tokenizer XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B` and repeat steps 2 and 3. **Record which engine served the accepted smoke** — it belongs in the guide in Task 8, and it decides whether Task 8's cost estimate needs re-measuring.
+4. **The accepted engine is `llama-cpp`.** Measured on the first real run (Colab L4, 2026-10-01): vLLM 0.30.0 with `vllm-gguf-plugin` 0.0.5 dies at `RuntimeError: Unknown gguf model_type: qwen3_5` in `weights_adapter/default.py`, and upstream issue vllm-project/vllm#38122 is still open. The name map is only the first wall: this checkpoint's `vision_config` carries `depth` where the loader reads `num_hidden_layers`, and spec §7.6's image column makes vision mandatory. So the fallback is *the* path, not a plan B.
+
+   ```
+   !python /content/serve_teacher.py --engine llama-cpp --tokenizer XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B
+   ```
+
+   It builds llama.cpp with CUDA (~10 minutes, cached in the runtime) and serves the same weights and projector through M2's own `--jinja --reasoning-format deepseek --reasoning-preserve --reasoning-budget 6144`. All four canaries passed first try: `text reply: 'ok'`, `image canary: PASS`, `reasoning canary: PASS`, `tools canary: PASS`.
+
+   **Record two numbers from the server log before continuing — they set Task 8's budget.**
+   - `print_timing ... tg = 44.7 t/s`: the per-slot decode rate. Aggregate is that times `--slots`, so 8 slots is ~350 t/s.
+   - `n_ctx_slot = 4096`: the per-row context, which is `--ctx-size / --slots`. The first run used `-c 32768 -np 8`, and 4096 per row is *below* the 6144-token reasoning backstop, so long reasoning rows would truncate silently. The launcher now takes `--ctx-size` (default 262144) and `--slots` (default 16), giving 16384 per row; `--slots 32` roughly doubles throughput at 8192 per row.
+
+   Task 8 phase 1 re-measures the rate at the launch settings rather than trusting this line.
 
 - [ ] **Step 7: Commit and push**
 

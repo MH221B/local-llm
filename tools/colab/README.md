@@ -37,10 +37,12 @@ the menu bar is where you pick hardware and stop the machine.
    from google.colab import drive
    drive.mount("/content/drive")
    ```
-3. Run the launcher cell. The tokenizer repo is fixed for this teacher — Task 1 Step 5 read it out of the GGUF:
+3. Run the launcher cell. The engine is `llama-cpp` and the tokenizer repo is fixed for this
+   teacher — Task 1 Step 5 read it out of the GGUF. vLLM cannot serve this checkpoint; see
+   Troubleshooting.
 
    ```
-   !python /content/serve_teacher.py --tokenizer XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B
+   !python /content/serve_teacher.py --engine llama-cpp --tokenizer XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B
    ```
 
    Copy the `trycloudflare.com` URL it prints. That URL is the teacher's address for this
@@ -77,8 +79,19 @@ the menu bar is where you pick hardware and stop the machine.
   cannot run inside the `!python` subprocess.
 - `CUDA out of memory` on load — another runtime is still alive. **Runtime → Manage
   sessions**, terminate the others, retry.
-- The launcher exits with a weight-mapping error — the GGUF plugin could not map this
-  architecture. Re-run with `--engine llama-cpp`.
+- The launcher exits with `Unknown gguf model_type: qwen3_5` — vLLM's GGUF plugin cannot map
+  this checkpoint. `vllm-gguf-plugin` 0.0.5 is the newest release and upstream issue
+  vllm-project/vllm#38122 is still open; supplying the missing name mapping only reaches a
+  second wall, because this checkpoint's vision config carries `depth` where the loader reads
+  `num_hidden_layers`. Vision is not optional (spec section 7.6 is 12% of the corpus), so that
+  path is out. Use `--engine llama-cpp`: same weights, same projector, same chat template, and
+  it is the engine M2 actually ran.
+- `-c`/`-np` are one trade-off and llama-server splits the context evenly across slots, so
+  `n_ctx_slot = ctx_size / slots`. Throughput is roughly 45 t/s per slot, so slots is the
+  speed lever and per-row context is its price. Do not let a slot fall below ~8192: the
+  reasoning backstop alone is 6144 tokens, and a row that overruns its slot is truncated
+  rather than rejected, which is a silent quality loss. Defaults are 262144 / 16 (16384 per
+  row, ~700 t/s); `--slots 32` doubles that and halves the context to 8192 per row.
 - The launcher exits with `image canary failed` — the engine cannot see images. On vLLM that
   means the projector was not picked up; re-run with `--engine llama-cpp`. Do not continue
   with a text-only server.

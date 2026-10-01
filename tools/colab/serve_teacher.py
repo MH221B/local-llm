@@ -102,14 +102,22 @@ def serve_vllm(tokenizer: str) -> subprocess.Popen:
     return subprocess.Popen(cmd, shell=True, env=os.environ)
 
 
-def serve_llama_cpp() -> subprocess.Popen:
+def serve_llama_cpp(ctx_size: int, slots: int) -> subprocess.Popen:
     """Fallback: same weights and projector, no continuous batching. Spec section 10.
 
-    The flags after `-np 8` are not optional. `--jinja` is what makes llama-server apply the
+    The flags after `-np` are not optional. `--jinja` is what makes llama-server apply the
     GGUF's own chat template, which is where `enable_thinking` and a request's `tools` schema
     are injected; without it the reasoning and tools canaries cannot pass, and the rows would
     come back shaped differently from M2's. The three `--reasoning-*` flags are M2's measured
     serving line, kept identical so the pass rates stay comparable across engines.
+
+    `-c` and `-np` are one trade-off, because the server splits the context evenly across
+    slots: `n_ctx_slot = ctx_size / slots`. Decode is weight-bound, so aggregate throughput is
+    roughly `tokens_per_second_per_slot x slots`, which makes slots the throughput lever and
+    the per-row context its price. Measured on the L4 with `-c 32768 -np 8`: 44.7 t/s per slot
+    (~350 t/s aggregate) and only **4096 tokens per row** — less than the 6144-token reasoning
+    backstop below, so long rows would have truncated silently. The defaults give 16384 per
+    row; `--slots 32` roughly doubles throughput and halves that to 8192.
     """
     sh("git clone -q --depth 1 https://github.com/ggml-org/llama.cpp /content/llama.cpp "
        "|| true")
@@ -120,10 +128,12 @@ def serve_llama_cpp() -> subprocess.Popen:
            f"-m {shlex.quote(str(LOCAL_MODELS / TEXT_GGUF))} "
            f"--mmproj {shlex.quote(str(LOCAL_MODELS / MMPROJ_GGUF))} "
            f"--alias {SERVED_NAME} --host 127.0.0.1 --port {PORT} "
-           f"--api-key $TEACHER_API_KEY -ngl 99 -fa on -c 32768 -np 8 "
+           f"--api-key $TEACHER_API_KEY -ngl 99 -fa on "
+           f"-c {ctx_size} -np {slots} "
            f"--jinja --reasoning-format deepseek --reasoning-preserve "
            f"--reasoning-budget 6144")
-    print("launching llama.cpp (GPU build takes ~15 minutes the first time)", flush=True)
+    print(f"launching llama.cpp: {slots} slots x {ctx_size // slots} ctx tokens "
+          f"(GPU build takes ~15 minutes the first time)", flush=True)
     return subprocess.Popen(cmd, shell=True, env=os.environ)
 
 
@@ -264,6 +274,15 @@ def open_tunnel() -> subprocess.Popen:
 def main() -> int:
     ap = argparse.ArgumentParser(description="serve the M3 teacher on Colab")
     ap.add_argument("--engine", choices=["vllm", "llama-cpp"], default="vllm")
+    ap.add_argument("--ctx-size", type=int, default=262144,
+                    help="llama.cpp only: total context, divided evenly across --slots. "
+                         "262144 is ~8 GiB of KV at 32 KiB/token, which is what the L4 holds "
+                         "alongside the 5.34 GB of weights. vLLM ignores this and uses its "
+                         "own --max-model-len.")
+    ap.add_argument("--slots", type=int, default=16,
+                    help="llama.cpp only: parallel sequences. Throughput is ~45 t/s x slots; "
+                         "each slot gets ctx-size/slots tokens. 16 -> 16384 per row, "
+                         "32 -> 8192 per row at about twice the speed.")
     ap.add_argument("--tokenizer", default=None,
                     help="HF repo whose tokenizer matches the GGUF; see Task 1 Step 5. vLLM "
                          "needs it because converting a tokenizer out of a GGUF is lossy. "
@@ -284,7 +303,8 @@ def main() -> int:
     mount_drive()
     stage_weights()
 
-    proc = serve_vllm(args.tokenizer) if args.engine == "vllm" else serve_llama_cpp()
+    proc = (serve_vllm(args.tokenizer) if args.engine == "vllm"
+            else serve_llama_cpp(args.ctx_size, args.slots))
     try:
         wait_for_health(proc)
         if not smoke():
