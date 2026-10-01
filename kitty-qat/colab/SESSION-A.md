@@ -1,6 +1,8 @@
 # Session A — train, merge, carry mtp, save (~2.5-3 h, Colab L4)
 
-Fresh Colab L4 runtime, Drive mounted at /content/drive.
+Fresh Colab L4 runtime. **Mount Drive first** (cell 1) — a new session has no
+`/content/drive` until you do, and `unzip` will report "cannot find" even though
+the zip is right there in My Drive.
 
 **Cell 0 (before anything) — get the code onto the box.** From the local machine
 (PowerShell), build a zip whose entries are nested under `kitty-qat/`:
@@ -19,6 +21,8 @@ Alternative (cleaner, if the repo is ever pushed to a git remote): skip the zip 
 
 ```python
 # Cell 1
+from google.colab import drive
+drive.mount("/content/drive")
 # Colab ships torchao 0.10.0; peft >= 0.21 hard-raises from is_torchao_available()
 # during LoRA injection when torchao is present but < 0.16, even though we never
 # use it. Removing it makes peft's probe return False cleanly. (Do NOT upgrade
