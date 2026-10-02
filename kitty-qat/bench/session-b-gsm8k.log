@@ -1,0 +1,82 @@
+# Session B — GSM8K, run0 (verbatim console output)
+
+Provenance: pasted from the Colab Session B console, 2026-10-02. The real
+`/content/gsm8k-raw.json` was written but not transferred, so only the console
+summary survives; `bench/gsm8k-raw.run0.json` records it (per-question `details`
+were not captured and are left empty).
+
+Command:
+    !python scripts/eval_gsm8k.py --adapter /content/drive/MyDrive/qat-lora --out /content/gsm8k-raw.json
+
+================================================================================
+
+=== gsm8k fp16 ===
+  loading fp16 ...
+Downloading bytes:           |  0.00B            
+Reconstructing (incomplete total...): |          |  0.00B /  0.00B            
+
+Fetching 3 files: 100% 3/3 [00:00<00:00, 1429.23it/s]
+Download complete: :           |  0.00B            
+Reconstruction complete: |          |  0.00B /  0.00B            
+Download complete: :           |  0.00B            
+Loading weights: 100% 426/426 [00:00<00:00, 5649.38it/s]
+[transformers] `causal_conv1d_fn` is falling back to its reference PyTorch implementation because `causal_conv1d` is not installed. This is correct but much slower; install `causal_conv1d` for the optimized kernel.
+[transformers] `chunk_gated_delta_rule` is falling back to its reference PyTorch implementation because `flash-linear-attention` is not installed. This is correct but much slower; install `flash-linear-attention` for the optimized kernel.
+[transformers] `causal_conv1d_update` is falling back to its reference PyTorch implementation because `causal_conv1d` is not installed. This is correct but much slower; install `causal_conv1d` for the optimized kernel.
+[transformers] `fused_recurrent_gated_delta_rule` is falling back to its reference PyTorch implementation because `flash-linear-attention` is not installed. This is correct but much slower; install `flash-linear-attention` for the optimized kernel.
+    gsm8k fp16             5/50 correct=4
+    gsm8k fp16            10/50 correct=9
+    gsm8k fp16            15/50 correct=13
+    gsm8k fp16            20/50 correct=17
+    gsm8k fp16            25/50 correct=21
+    gsm8k fp16            30/50 correct=26
+    gsm8k fp16            35/50 correct=31
+    gsm8k fp16            40/50 correct=34
+    gsm8k fp16            45/50 correct=39
+    gsm8k fp16            50/50 correct=44
+fp16             44/50 total_pages=4544
+
+=== gsm8k kitty-int2 ===
+  loading kitty-int2 ...
+Downloading bytes:           |  0.00B            
+Reconstructing (incomplete total...): |          |  0.00B /  0.00B            
+
+Fetching 3 files: 100% 3/3 [00:00<00:00, 1478.60it/s]
+Download complete: :           |  0.00B            
+Download complete: :           |  0.00B            
+Reconstruction complete: |          |  0.00B /  0.00B            
+Loading weights: 100% 426/426 [00:00<00:00, 4950.68it/s]
+    gsm8k kitty-int2       5/50 correct=5
+    gsm8k kitty-int2      10/50 correct=9
+    gsm8k kitty-int2      15/50 correct=13
+    gsm8k kitty-int2      20/50 correct=18
+    gsm8k kitty-int2      25/50 correct=23
+    gsm8k kitty-int2      30/50 correct=28
+    gsm8k kitty-int2      35/50 correct=33
+    gsm8k kitty-int2      40/50 correct=37
+    gsm8k kitty-int2      45/50 correct=42
+    gsm8k kitty-int2      50/50 correct=46
+kitty-int2       46/50 total_pages=4552
+
+=== gsm8k kitty-int2+qat ===
+  loading kitty-int2+qat ...
+Downloading bytes:           |  0.00B            
+Reconstructing (incomplete total...): |          |  0.00B /  0.00B            
+
+Fetching 3 files: 100% 3/3 [00:00<00:00, 1300.29it/s]
+Download complete: :           |  0.00B            
+Download complete: :           |  0.00B            
+Reconstruction complete: |          |  0.00B /  0.00B            
+Loading weights: 100% 426/426 [00:00<00:00, 5349.93it/s]
+    gsm8k kitty-int2+qat   5/50 correct=5
+    gsm8k kitty-int2+qat  10/50 correct=8
+    gsm8k kitty-int2+qat  15/50 correct=12
+    gsm8k kitty-int2+qat  20/50 correct=17
+    gsm8k kitty-int2+qat  25/50 correct=21
+    gsm8k kitty-int2+qat  30/50 correct=26
+    gsm8k kitty-int2+qat  35/50 correct=31
+    gsm8k kitty-int2+qat  40/50 correct=34
+    gsm8k kitty-int2+qat  45/50 correct=39
+    gsm8k kitty-int2+qat  50/50 correct=44
+kitty-int2+qat   44/50 total_pages=4632
+wrote /content/gsm8k-raw.json

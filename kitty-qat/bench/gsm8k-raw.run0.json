@@ -1,0 +1,22 @@
+{
+  "run0": {
+    "fp16": {
+      "correct": 44,
+      "of": 50,
+      "details": [],
+      "total_pages": 4544
+    },
+    "kitty-int2": {
+      "correct": 46,
+      "of": 50,
+      "details": [],
+      "total_pages": 4552
+    },
+    "kitty-int2+qat": {
+      "correct": 44,
+      "of": 50,
+      "details": [],
+      "total_pages": 4632
+    }
+  }
+}

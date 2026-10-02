@@ -43,7 +43,9 @@ def haystack_with_needle(rng: random.Random, tok) -> tuple[str, str]:
     )
 
     body_ids = fill_ids * ((target - len(needle_ids)) // len(fill_ids) + 1)
-    pos = rng.randrange(0, len(body_ids) - len(needle_ids))
+    # pos must keep the whole needle inside the final [:target] slice, else the
+    # needle is truncated off the end and the example is unfindable by design.
+    pos = rng.randrange(0, target - len(needle_ids))
     full_ids = (
         body_ids[:pos]
         + needle_ids
@@ -92,12 +94,19 @@ def main() -> None:
                 **CONFIGS[name],
             )
 
-            ids = tok(
-                "Below is a long document. Find the passcode in it "
-                "and answer with just the passcode.\n\n"
-                + haystack,
-                return_tensors="pt",
-            ).input_ids.to(model.device)
+            # Chat-template the request, exactly like gsm8k. Tokenizing the raw
+            # string leaves an instruct model with a document continuation, not a
+            # question, so it never emits the passcode.
+            chat = tok.apply_chat_template(
+                [{"role": "user", "content":
+                  "Below is a long document. Find the passcode in it "
+                  "and answer with just the passcode.\n\n"
+                  + haystack}],
+                add_generation_prompt=True,
+                tokenize=False,
+                enable_thinking=False,
+            )
+            ids = tok(chat, return_tensors="pt").input_ids.to(model.device)
             assert ids.shape[-1] > 160, ids.shape  # dead-zone parity assert
 
             with torch.no_grad():
@@ -109,6 +118,8 @@ def main() -> None:
                 )
 
             text = tok.decode(out[0][ids.shape[-1]:], skip_special_tokens=True)
+            if i == 1:
+                print(f"    [debug] first completion: {text[:100]!r}", flush=True)
             found = code in text
             hits += found
             details.append(

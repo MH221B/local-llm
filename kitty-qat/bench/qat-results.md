@@ -1,9 +1,10 @@
 # Spec 2 — KV-QAT on Kitty INT2 (Qwen3.5-4B-MTP-Heretic)
 
-**Status: PPL partial — eval interrupted, not complete.** Session B was stopped after
-the held-out and WikiText-2 **run0** rows. Only run0 is reported (run1 was interrupted
-and, being deterministic, would duplicate run0 anyway). GSM8K and NIAH did **not** run.
-Task 9 (GGUF + MTP smoke) not done. Numbers below are run0.
+**Status: partial.** PPL: run0 for held-out + WikiText-2 (eval interrupted before the
+final save; run1 would duplicate run0). GSM8K: run0 complete. NIAH: **run0 returned
+0/10 for every config, including fp16 — a harness bug (no chat template + a
+needle-truncation bug), now fixed; the result is discarded.** Task 9 (GGUF + MTP
+smoke) not done.
 
 Date: 2026-10-02. Adapter: `qat-lora` (LoRA r=8, `k_proj`+`v_proj` on the 8
 full-attention layers; 458,752 trainable params / 0.0109%). Merged artifact
@@ -53,6 +54,24 @@ raw-text windows (out-of-domain, never trained on).
 columns (4.4693 = 4.4693; 16.5982 = 16.5982). Quantization is not leaking into
 prefill — the port behaves as designed.
 
+## GSM8K (sanity, run0)
+
+50 test questions, 8-shot CoT, greedy, max-new 512. Single-pass direction check, not a
+gate.
+
+| config | correct | total_pages |
+|---|---|---|
+| fp16 | 44/50 | 4544 |
+| kitty-int2 | 46/50 | 4552 |
+| kitty-int2+qat | 44/50 | 4632 |
+
+Read: INT2 does **not** damage GSM8K here (46 vs 44), and QAT does not change it
+(44 = 44). The INT2 ≥ fp16 gap is within noise. At n=50 single-pass this is
+underpowered — it rules out a catastrophic regression, not a small delta.
+
+Source: `bench/session-b-gsm8k.log`; summary in `bench/gsm8k-raw.run0.json`
+(per-question `details` were not captured from the console).
+
 ## Interpretation (and the confound)
 
 The QAT prefill deltas expose that the adapter also changes full-precision behaviour,
@@ -69,9 +88,11 @@ not merely domain adaptation.** The in-domain delta alone cannot separate the tw
 
 ## Limitations / not yet done
 
-- **GSM8K and NIAH were not run.** These are outside the training objective and are
-  the check that the PPL gain is *useful* rather than metric-aligned. Without them the
-  result is PPL-only.
+- **GSM8K ran (sanity); NIAH is broken.** GSM8K shows no INT2/QAT regression (see
+  above) but is underpowered. NIAH returned 0/10 for *all* configs including fp16 —
+  a harness bug, now fixed (raw prompt with no chat template; needle could be
+  truncated off the end). Its result is discarded pending a re-run. So the
+  out-of-objective check is only partial.
 - **No `fp16+qat` row**, so the QAT-vs-fine-tuning split is inferred from prefill
   deltas, not measured directly.
 - **No matched fp16-cache fine-tune** (the clean control for the confound).
@@ -94,8 +115,10 @@ not merely domain adaptation.** The in-domain delta alone cannot separate the tw
 !python scripts/eval_ppl.py --adapter /content/drive/MyDrive/qat-lora --wt2 --runs 1 --out /content/ppl-raw.json
 ```
 
-Source of the numbers above: `bench/session-b-run0.log` (verbatim run0 console
-output). `bench/ppl-raw.run0.json` is that output reconstructed into the exact shape
-`eval_ppl.py` writes — run0 only, `spread` null (the script only fills `spread` when
-`--runs >= 2`). The real `ppl-raw.json` was never written: the run was stopped before
-the final save.
+Source of the numbers above: `bench/session-b-run0.log` (verbatim PPL run0 console
+output) and `bench/session-b-gsm8k.log` (verbatim GSM8K console output).
+`bench/ppl-raw.run0.json` and `bench/gsm8k-raw.run0.json` reconstruct those into the
+shape the scripts write — run0 only, `spread` null (the script only fills `spread`
+when `--runs >= 2`). The real `ppl-raw.json` was never written (the run was stopped
+before the final save); `gsm8k-raw.json` was written but not transferred, so its
+per-question `details` are lost.
