@@ -2692,7 +2692,7 @@ checking for `M`, not for an empty output.
 - Create: `tools/dataset/audit.py`
 - Modify: `docs/qwen35-4b-sft-rebuild.md` (the tracked guide; see Step 10 for why it is not a `datasets/` README)
 
-- [ ] **Step 1: Write the sample-audit module**
+- [x] **Step 1: Write the sample-audit module**
 
 The spec's alternative to an oracle for the un-oracled columns is a sample audit (§10.1) and a 20-example human spot-check (§11.7). This makes that repeatable and gives the README something concrete to point at.
 
@@ -2808,7 +2808,7 @@ if __name__ == "__main__":
         sys.exit(main())
 ```
 
-- [ ] **Step 2: Smoke the audit module offline**
+- [x] **Step 2: Smoke the audit module offline**
 
 ```powershell
 & "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.audit
