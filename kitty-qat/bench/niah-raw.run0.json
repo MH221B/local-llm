@@ -1,0 +1,22 @@
+{
+  "run0": {
+    "fp16": {
+      "hits": 10,
+      "of": 10,
+      "details": [],
+      "total_pages": 2008
+    },
+    "kitty-int2": {
+      "hits": 10,
+      "of": 10,
+      "details": [],
+      "total_pages": 2008
+    },
+    "kitty-int2+qat": {
+      "hits": 10,
+      "of": 10,
+      "details": [],
+      "total_pages": 2008
+    }
+  }
+}

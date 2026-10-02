@@ -1,10 +1,9 @@
 # Spec 2 — KV-QAT on Kitty INT2 (Qwen3.5-4B-MTP-Heretic)
 
 **Status: partial.** PPL: run0 for held-out + WikiText-2 (eval interrupted before the
-final save; run1 would duplicate run0). GSM8K: run0 complete. NIAH: **run0 returned
-0/10 for every config, including fp16 — a harness bug (no chat template + a
-needle-truncation bug), now fixed; the result is discarded.** Task 9 (GGUF + MTP
-smoke) not done.
+final save; run1 would duplicate run0). GSM8K: run0 complete. NIAH: run0 complete
+after fixing the harness (the first run was 0/10 for every config — a bug, not a
+result). Task 9 (GGUF + MTP smoke) not done.
 
 Date: 2026-10-02. Adapter: `qat-lora` (LoRA r=8, `k_proj`+`v_proj` on the 8
 full-attention layers; 458,752 trainable params / 0.0109%). Merged artifact
@@ -72,6 +71,26 @@ underpowered — it rules out a catastrophic regression, not a small delta.
 Source: `bench/session-b-gsm8k.log`; summary in `bench/gsm8k-raw.run0.json`
 (per-question `details` were not captured from the console).
 
+## NIAH (guardrail, run0)
+
+10 needles in 2–4K-token haystacks, greedy. Reported, not gated.
+
+| config | hits | total_pages |
+|---|---|---|
+| fp16 | 10/10 | 2008 |
+| kitty-int2 | 10/10 | 2008 |
+| kitty-int2+qat | 10/10 | 2008 |
+
+Read: no retrieval damage from INT2 or QAT at this length — the guardrail passes.
+**Caveat: it is saturated** (10/10 everywhere), so it only rules out a catastrophic
+retrieval loss; longer haystacks would be needed to discriminate a subtle one.
+
+The first NIAH run returned 0/10 for *all* configs — a harness bug, not a model
+result: the prompt skipped the chat template, and the needle could be truncated off
+the end by the final `[:target]`. Both fixed in `eval_niah.py`.
+
+Source: `bench/session-b-niah.log`; summary in `bench/niah-raw.run0.json`.
+
 ## Interpretation (and the confound)
 
 The QAT prefill deltas expose that the adapter also changes full-precision behaviour,
@@ -88,11 +107,10 @@ not merely domain adaptation.** The in-domain delta alone cannot separate the tw
 
 ## Limitations / not yet done
 
-- **GSM8K ran (sanity); NIAH is broken.** GSM8K shows no INT2/QAT regression (see
-  above) but is underpowered. NIAH returned 0/10 for *all* configs including fp16 —
-  a harness bug, now fixed (raw prompt with no chat template; needle could be
-  truncated off the end). Its result is discarded pending a re-run. So the
-  out-of-objective check is only partial.
+- **GSM8K and NIAH both ran, but both are weak.** GSM8K shows no INT2/QAT regression
+  (see above) but is underpowered (n=50 single-pass). NIAH is saturated at 10/10 for
+  every config, so it only rules out catastrophic retrieval loss. Neither can resolve
+  a small delta — the out-of-objective check is direction-only.
 - **No `fp16+qat` row**, so the QAT-vs-fine-tuning split is inferred from prefill
   deltas, not measured directly.
 - **No matched fp16-cache fine-tune** (the clean control for the confound).
@@ -116,9 +134,10 @@ not merely domain adaptation.** The in-domain delta alone cannot separate the tw
 ```
 
 Source of the numbers above: `bench/session-b-run0.log` (verbatim PPL run0 console
-output) and `bench/session-b-gsm8k.log` (verbatim GSM8K console output).
-`bench/ppl-raw.run0.json` and `bench/gsm8k-raw.run0.json` reconstruct those into the
-shape the scripts write — run0 only, `spread` null (the script only fills `spread`
-when `--runs >= 2`). The real `ppl-raw.json` was never written (the run was stopped
-before the final save); `gsm8k-raw.json` was written but not transferred, so its
-per-question `details` are lost.
+output), `bench/session-b-gsm8k.log` (GSM8K), and `bench/session-b-niah.log` (NIAH).
+`bench/ppl-raw.run0.json`, `bench/gsm8k-raw.run0.json`, and `bench/niah-raw.run0.json`
+reconstruct those into the shape the scripts write — run0 only, `spread` null (the
+script only fills `spread` when `--runs >= 2`). The real `ppl-raw.json` was never
+written (the run was stopped before the final save); `gsm8k-raw.json` and
+`niah-raw.json` were written but not transferred, so their per-example `details` are
+lost.

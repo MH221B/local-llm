@@ -1,0 +1,90 @@
+# Session B — NIAH, run0 (verbatim console output, after the harness fix)
+
+Provenance: pasted from the Colab Session B console, 2026-10-02. This is the
+re-run after fixing `eval_niah.py` (chat template + needle kept inside the
+`[:target]` slice). The first run returned 0/10 for every config and is discarded.
+The real `/content/niah-raw.json` was written but not transferred; summary in
+`bench/niah-raw.run0.json` (per-example `details` not captured).
+
+Command:
+    !python scripts/eval_niah.py --adapter /content/drive/MyDrive/qat-lora --out /content/niah-raw.json
+
+Note: the `flash-linear-attention` / `causal_conv1d` fallback warnings still appear,
+so the optimized kernels were not active in this runtime. The reference path is
+correct math (just slower); results are unaffected.
+
+================================================================================
+
+=== niah fp16 ===
+  loading fp16 ...
+Downloading bytes:           |  0.00B            
+Reconstructing (incomplete total...): |          |  0.00B /  0.00B            
+
+Fetching 3 files: 100% 3/3 [00:00<00:00, 1236.04it/s]
+Download complete: :           |  0.00B            
+Download complete: :           |  0.00B            
+Reconstruction complete: |          |  0.00B /  0.00B            
+Loading weights: 100% 426/426 [00:00<00:00, 5654.40it/s]
+[transformers] `causal_conv1d_fn` is falling back to its reference PyTorch implementation because `causal_conv1d` is not installed. This is correct but much slower; install `causal_conv1d` for the optimized kernel.
+[transformers] `chunk_gated_delta_rule` is falling back to its reference PyTorch implementation because `flash-linear-attention` is not installed. This is correct but much slower; install `flash-linear-attention` for the optimized kernel.
+[transformers] `causal_conv1d_update` is falling back to its reference PyTorch implementation because `causal_conv1d` is not installed. This is correct but much slower; install `causal_conv1d` for the optimized kernel.
+[transformers] `fused_recurrent_gated_delta_rule` is falling back to its reference PyTorch implementation because `flash-linear-attention` is not installed. This is correct but much slower; install `flash-linear-attention` for the optimized kernel.
+    [debug] first completion: 'HORSE-403958\n'
+    niah fp16             1/10 hits=1 (haystack 3744 tok)
+    niah fp16             2/10 hits=2 (haystack 3839 tok)
+    niah fp16             3/10 hits=3 (haystack 2544 tok)
+    niah fp16             4/10 hits=4 (haystack 2847 tok)
+    niah fp16             5/10 hits=5 (haystack 3999 tok)
+    niah fp16             6/10 hits=6 (haystack 3216 tok)
+    niah fp16             7/10 hits=7 (haystack 3056 tok)
+    niah fp16             8/10 hits=8 (haystack 2304 tok)
+    niah fp16             9/10 hits=9 (haystack 3280 tok)
+    niah fp16            10/10 hits=10 (haystack 3872 tok)
+fp16             10/10 total_pages=2008
+
+=== niah kitty-int2 ===
+  loading kitty-int2 ...
+Downloading bytes:           |  0.00B            
+Reconstructing (incomplete total...): |          |  0.00B /  0.00B            
+
+Fetching 3 files: 100% 3/3 [00:00<00:00, 1322.29it/s]
+Download complete: :           |  0.00B            
+Download complete: :           |  0.00B            
+Reconstruction complete: |          |  0.00B /  0.00B            
+Loading weights: 100% 426/426 [00:00<00:00, 4042.36it/s]
+    [debug] first completion: 'HORSE-403958\n'
+    niah kitty-int2       1/10 hits=1 (haystack 3744 tok)
+    niah kitty-int2       2/10 hits=2 (haystack 3839 tok)
+    niah kitty-int2       3/10 hits=3 (haystack 2544 tok)
+    niah kitty-int2       4/10 hits=4 (haystack 2847 tok)
+    niah kitty-int2       5/10 hits=5 (haystack 3999 tok)
+    niah kitty-int2       6/10 hits=6 (haystack 3216 tok)
+    niah kitty-int2       7/10 hits=7 (haystack 3056 tok)
+    niah kitty-int2       8/10 hits=8 (haystack 2304 tok)
+    niah kitty-int2       9/10 hits=9 (haystack 3280 tok)
+    niah kitty-int2      10/10 hits=10 (haystack 3872 tok)
+kitty-int2       10/10 total_pages=2008
+
+=== niah kitty-int2+qat ===
+  loading kitty-int2+qat ...
+Downloading bytes:           |  0.00B            
+Reconstructing (incomplete total...): |          |  0.00B /  0.00B            
+
+Fetching 3 files: 100% 3/3 [00:00<00:00, 1198.94it/s]
+Download complete: :           |  0.00B            
+Download complete: :           |  0.00B            
+Reconstruction complete: |          |  0.00B /  0.00B            
+Loading weights: 100% 426/426 [00:00<00:00, 5031.17it/s]
+    [debug] first completion: 'HORSE-403958\n'
+    niah kitty-int2+qat   1/10 hits=1 (haystack 3744 tok)
+    niah kitty-int2+qat   2/10 hits=2 (haystack 3839 tok)
+    niah kitty-int2+qat   3/10 hits=3 (haystack 2544 tok)
+    niah kitty-int2+qat   4/10 hits=4 (haystack 2847 tok)
+    niah kitty-int2+qat   5/10 hits=5 (haystack 3999 tok)
+    niah kitty-int2+qat   6/10 hits=6 (haystack 3216 tok)
+    niah kitty-int2+qat   7/10 hits=7 (haystack 3056 tok)
+    niah kitty-int2+qat   8/10 hits=8 (haystack 2304 tok)
+    niah kitty-int2+qat   9/10 hits=9 (haystack 3280 tok)
+    niah kitty-int2+qat  10/10 hits=10 (haystack 3872 tok)
+kitty-int2+qat   10/10 total_pages=2008
+wrote /content/niah-raw.json
