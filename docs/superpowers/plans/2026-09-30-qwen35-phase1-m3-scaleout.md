@@ -2608,26 +2608,36 @@ prebuilt rows the trajectory pass can attempt, and both are the reason Task 8 om
 `--multi-limit` (omitted means "every candidate") instead of naming a number that would have
 to be maintained by hand.
 
-**Measured, same run — 48 seconds:**
+**Measured, same run — 48 seconds, and reproduced exactly on a second run:**
 
 ```
-hermes-function-calling-v1:func_calling -> 346
-hermes-function-calling-v1:func_calling_singleturn -> 10
-Team-ACE/ToolACE -> 2763
-smoltalk systemchats-30k -> 1500
-smoltalk everyday-conversations -> 1500
-trajectory prompts: 6119 (simulated: 0)
+hermes-function-calling-v1:func_calling -> 346 trajectories (581 seed-only)
+hermes-function-calling-v1:func_calling_singleturn -> 10 trajectories (1090 seed-only)
+Team-ACE/ToolACE -> 2763 trajectories (8510 seed-only)
+smoltalk systemchats-30k -> 1500 trajectories (0 seed-only)
+smoltalk everyday-conversations -> 1500 trajectories (0 seed-only)
+trajectory prompts: 16300 (simulated: 0, tool-carrying: 12579, seed-only: 10181)
 ```
 
-`invalid trajectories: 0`, by domain coding 3,119 / roleplay 3,000. The cap raise is what bought this: M2's 2,800-cap table produced 170 rows, so this step would otherwise have shipped a 39,000-prompt corpus with 170 prebuilt multi-turn rows in it.
+`shippable 6119 | seed-only 10181 | bad 0`, by domain coding 3,119 / roleplay 3,000. The cap raise is what bought this: M2's 2,800-cap table produced 170 rows, so this step would otherwise have shipped a 39,000-prompt corpus with 170 prebuilt multi-turn rows in it.
 
-**`tool-carrying` is the number to read here, not the domain split, and it took a second pass to get right.** The first run reported **356**, every one of them hermes, because `_toolace_schema` was dropping *all* of ToolACE's schemas. It sliced `system[first '[' : last ']']` and ran `json.loads` over it, but a ToolACE system prompt carries further bracket groups after the function list, so the parse failed with `Extra data` on every row and 2,763 tool-calling trajectories were written with `tools=None`. Their calls survived — 2,280 parse from the `[Name(args)]` DSL — so the rows looked tool-ish while declaring nothing, and nothing errors: the loss is only visible if `tools` is counted separately from `domain`.
+**Three findings, and a domain count hides all three.** They are worth reading together because the same failure mode repeats: `domain` looked healthy each time while the column that carried the value was empty or truncated.
 
-Parsing the first JSON value with `json.JSONDecoder().raw_decode` recovers 2,456 of the first 3,000 rows. The re-run gives `tool-carrying: 2,398` (ToolACE 2,042, hermes 356). That is a 6.7x swing in the pool `run_simulated` draws its seeds from — it seeds only from `t.tools` — so the bug would have cut the simulated loop's seed set to a sixth with no error anywhere.
+1. **`_toolace_schema` dropped every ToolACE schema.** It sliced `system[first '[' : last ']']` and ran `json.loads` over it, but a ToolACE system prompt carries further bracket groups after the function list, so the parse failed with `Extra data` on every row and 2,763 tool-calling trajectories were written with `tools=None`. Their calls survived — 2,280 parse from the `[Name(args)]` DSL — so the rows looked tool-ish while declaring nothing. `json.JSONDecoder().raw_decode` at the first `[` recovers 2,456 of the first 3,000 rows.
 
-The hermes configs are the remaining shortfall, and it is a data-shape fact, not a cap bug. Both hold 1,893 rows. `build_hermes` accepts 927 and 1,100 of them respectively, but `validate_trajectory` requires every `tool_call` to be answered by a `tool` message, and `func_calling_singleturn`'s conversations *end* on the assistant's call — so 1,090 of its 1,100 built trajectories are rejected with `call '<id>' has no tool result`, leaving 10. `func_calling` keeps 346. Hermes therefore supplies 356 of its 3,000 cap, and ToolACE's 2,042 carry the pool.
+2. **The hermes configs supply 356 of their 3,000 cap**, a data shape rather than a cap bug. Both hold 1,893 rows and `build_hermes` accepts 927 and 1,100 of them, but `validate_trajectory` requires every `tool_call` to be answered by a `tool` message and `func_calling_singleturn`'s conversations end on the assistant's call. Of the 2,027 hermes builds, 356 are valid and **1,671 are rejected for an unresolved call and nothing else**.
 
-Recorded rather than fixed: whether an unanswered final tool call is a valid trajectory is a spec section 5.1 question about what a trajectory *is*, and the same rule is enforced at generation time (`trajectory.py`), so widening it is not a Task 7 edit. With ToolACE's schemas recovered it costs the pool little.
+3. **Most of the corpus is unusable as a trajectory but perfect as a seed.** ToolACE is the bigger case: 8,510 of its rows end on, or carry, an unanswered call. 10,181 of the 16,300 harvested rows are seed-only.
+
+**The rule is not relaxed to admit them.** Spec section 5.1 defines this column as "call -> result -> continue … flattened, the student learns to emit a tool call but never to read its result". A trajectory ending on an unanswered call *is* that truncated half, so shipping them would fill the column with exactly the shape the spec says does not teach the skill the column exists for. The rows were simply being discarded, which is a different problem from being wrong.
+
+**They are harvested as seeds instead.** `harvest` keeps a row when its *only* problem is an unresolved call, it carries `tools`, and it has a user turn, marking `meta.seed_only`. `run_simulated` needs no change: it seeds from `t.tools` plus the first user turn and the teacher plays agent *and* tool environment, so every seed becomes the complete `call -> result -> continue` dialog. `run_trajectory` skips and counts them, because `generate_prebuilt` returns `None` for a call with no source observation to splice in — attempting them would spend a teacher call to record a drop, every time. Verified: `shippable 6119 | seed-only 10181 | bad 0` (every seed-only row fails *only* for unresolved calls, carries tools, and has a user turn), and on a two-row fixture `run_trajectory` attempts 1 and skips 1.
+
+The seed pool is the point: `run_simulated` draws on **12,579** tool-carrying rows, against 356 at the start of this task.
+
+Seed-only rows must **not** count against `--limit-per-source`. They did, and ToolACE silently fell from 2,763 shippable to 1,471 — the cap is a promise about shippable rows, and letting seeds share it displaces the very rows it exists to protect.
+
+**One change was tried and reverted, and the reason is recorded rather than hidden.** Splitting a batch `tool` response into one `tool` message per call looked correct — the response array is name-for-name ordered with the calls (13/13 multi-call turns) and it turned 13 sampled rows valid — but end to end it *cost* 725 shippable rows (ToolACE 2,763 -> 2,038). An in-pass comparison of the old and new pairing reported no such loss, so the two measurements disagree and the cause is not understood. The suspected mechanism: `_toolace_calls` numbers calls `call_0, call_1, …` **per message**, so a conversation with two batches has colliding ids and `validate_trajectory`'s id-keyed bookkeeping is corrupted by them — which would make validity sensitive to message counts in exactly this confusing way. That is worth fixing properly, with its own test, before the next rebuild. An unexplained end-to-end regression does not ship.
 
 - [ ] **Step 4: Re-invent the Magpie pools at scale**
 

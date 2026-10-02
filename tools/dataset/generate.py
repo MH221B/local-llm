@@ -298,6 +298,17 @@ def run_trajectory(*, root: Path, client, cache, limit: int | None, thinking: bo
     stats = _traj_stats()
     path = root / "prompts" / "trajectories.jsonl"
     records = [trajectory_from_dict(r) for r in iter_jsonl(path)] if path.exists() else []
+    # Seed-only rows (a conversation that ends on the assistant's tool call) can never pass
+    # `generate_prebuilt`: it returns None for a call with no source observation to splice
+    # in. They exist for `run_simulated`, which reads the same file and needs only the first
+    # user turn and `tools`. Skipping them here is what keeps that split honest -- attempting
+    # them would spend a teacher call to record a drop, every time.
+    seed_only = [p for p in records if p.meta.get("seed_only")]
+    records = [p for p in records if not p.meta.get("seed_only")]
+    if seed_only:
+        print(f"trajectory: skipping {len(seed_only)} seed-only rows "
+              f"(the simulated loop seeds from them)", flush=True)
+    stats["seed_only_skipped"] = len(seed_only)
     if limit is not None:
         records = split.downsample(records, limit)
 
