@@ -1311,6 +1311,8 @@ one call per prompt      : True
 
 That is this step's acceptance — batching happens, and nothing about what ships changes — without spending compute units. **The live half still has to run before Task 8**, for the one thing a stub cannot show: the real speedup against the tunnel and the server. That number is what Task 8's budget rests on, so run the command above at the start of the next session that has an endpoint, and pick `--concurrency` from the measured result rather than from this line.
 
+> **Measured deviation — the live half FAILED the 2.0x bar (2026-10-03).** Serial **1083.2 s** vs parallel **1189.5 s → 0.9x**, with accepted counts identical (24/24), so the driver is correct and the shortfall is entirely the serving stack. A 16-slot sweep gives conc1 34.2 / conc8 47.1 / conc16 51.8 tok/s — a ~1.5x ceiling, not 8–16x. A salvage attempt (rebuild `-DCMAKE_CUDA_ARCHITECTURES=89` + serve `--kv-quant q8_0`) re-measured **47.6 tok/s** at 16 slots vs 51.8 — no improvement. Cause: Qwen3.5 is a hybrid model whose recurrent layers decode sequentially per sequence and do not parallelize across the batch, so one L4 + llama.cpp caps near **50 tok/s aggregate** however concurrency is set. Task 8's ~700 tok/s budget is unreachable on this stack; this box stays **unticked** pending a scope / engine / hardware decision.
+
 - [x] **Step 8: Commit**
 
 ```bash
