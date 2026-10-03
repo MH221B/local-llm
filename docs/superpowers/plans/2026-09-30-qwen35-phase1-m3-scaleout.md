@@ -2523,9 +2523,9 @@ M3's accepted target is 25,000 examples, so the *candidate* pool has to be the r
 
 > **Superseded by the 2026-10-03 scope cut.** This task built the full 38,999-prompt corpus
 > measured below; that corpus is preserved at `datasets/qwen35-4b-sft-full/`. The active
-> `datasets/qwen35-4b-sft/` is now a proportional 1/12 subset sized for a single-L4 Task 8 —
-> see the scope-cut callout in Task 8 Step 3. Every figure below describes the full corpus, not
-> the active one.
+> `datasets/qwen35-4b-sft/` is now a 1/12 subset (single-turn and multi-turn pools rebalanced
+> to the spec shares) sized for a single-L4 Task 8 — see the scope-cut callout in Task 8 Step 3.
+> Every figure below describes the full corpus, not the active one.
 
 - [x] **Step 1: Bring up the local student server for exact token counts**
 
@@ -2846,25 +2846,28 @@ is free for phase 2.
 > tool-carrying trajectory (12,579). So the cut is of the **pools**, per this step's own rule.
 >
 > The full corpus is archived at **`datasets/qwen35-4b-sft-full/`**; the active
-> `datasets/qwen35-4b-sft/` is a proportional, domain-preserving **1/12** subset, with `images/`
-> a junction into the archive:
+> `datasets/qwen35-4b-sft/` is a **1/12** subset, with the single-turn and multi-turn pools
+> rebalanced to the spec shares and `images/` a junction into the archive:
 >
 > | pool | full | active |
 > |---|---|---|
-> | `prompts/train.jsonl` | 38,999 | 3,250 (65 tools, 112 oracle) |
-> | `prompts/val.jsonl` | 1,068 | 89 |
+> | `prompts/train.jsonl` | 38,999 | 3,250 (51 tools, 97 oracle) — 30/30/20/20 |
+> | `prompts/val.jsonl` | 1,068 | 89 — 30/30/20/20 |
 > | `verification/seeds.jsonl` | 1,001 | 83 (all oracle) |
-> | `prompts/trajectories.jsonl` | 16,300 | 1,358 (497 shippable / 861 seed-only / 1,053 tool-carrying) |
+> | `prompts/trajectories.jsonl` | 16,300 | 1,358 (822 shippable / 536 seed-only / 649 tool-carrying) — 50/50 |
 > | `prompts/magpie.jsonl` | 6 | 6 |
 >
-> Estimated **~5,300 calls ≈ 15 h** at 48 tok/s (~500 output tok/call): seeded ~3,339 +
-> difficulty ~390 + trajectory 497 + simulated ~1,053. The commands below run unchanged against
+> Estimated **~5,200 calls ≈ 15 h** at 48 tok/s (~500 output tok/call): seeded ~3,339 +
+> difficulty ~360 + trajectory 822 + simulated ~649. The commands below run unchanged against
 > the active path; only **`--concurrency` drops 32 → 16**, because the server was launched with
 > exactly 16 slots (`n_slots = 16`) and 32 merely queues. The "≈46,000 candidates" arithmetic
-> further down is the *uncut* full-scope figure and no longer describes the active pool. Because
-> the cut is proportional rather than `DOMAIN_SHARE`-rebalanced, Step 4's §11.5 share check will
-> still report the uncensored shortfall the full corpus already carried — a recorded supply
-> ceiling, not a regression.
+> further down is the *uncut* full-scope figure and no longer describes the active pool.
+>
+> The single-turn pool is `DOMAIN_SHARE`-balanced (30/30/20/20) and the multi-turn pool is
+> 50/50, but Step 4's §11.5 check on `train_final.example_share` may still lean coding: the
+> realised mix also draws on `run_simulated`, which seeds from the **tool-carrying** trajectories
+> (ToolACE is coding-heavy), plus the all-coding 83-row oracle seed pool. Record whatever share
+> comes back; it is a property of the source supply, not of this cut.
 >
 > **The two-phase split is collapsed for this cut.** Any `--mode all` slice runs the uncapped
 > difficulty/trajectory/simulated passes in full, so a "cheap Phase 1" is impossible — `--limit`
