@@ -2839,9 +2839,9 @@ knowledge at a small share of the budget, and its calls are cached, so anything 
 is free for phase 2.
 
 > **SCOPE CUT (2026-10-03) — the active corpus is a 1/12 derivative; run at `--concurrency 16`.**
-> The live T3 Step 7 measurement (see its deviation note) caps this L4 + llama.cpp stack at
-> ~48 tok/s aggregate: the full 38,999-prompt corpus is ~62,000 teacher calls (~180 h). Two
-> passes are the reason and neither is bounded by `--limit`: `run_difficulty` judges every
+> The live T3 Step 7 measurement (see its deviation note) puts this L4 + llama.cpp stack in the
+> low tens of tok/s aggregate: the full 38,999-prompt corpus is ~62,000 teacher calls, i.e.
+> ~100-180 h. Two passes are the reason and neither is bounded by `--limit`: `run_difficulty` judges every
 > oracle prompt in `TRAIN_POOLS` (2,396 of them) at `k=2`, and `run_simulated` seeds from every
 > tool-carrying trajectory (12,579). So the cut is of the **pools**, per this step's own rule.
 >
@@ -2857,7 +2857,9 @@ is free for phase 2.
 > | `prompts/trajectories.jsonl` | 16,300 | 1,358 (822 shippable / 536 seed-only / 649 tool-carrying) — 50/50 |
 > | `prompts/magpie.jsonl` | 6 | 6 |
 >
-> Estimated **~5,200 calls ≈ 15 h** at 48 tok/s (~500 output tok/call): seeded ~3,339 +
+> Measured live (2026-10-03) — **~1,660 output tok/call** and ~3 new calls/min — so the
+> ~5,200-call pass is **~29 h, not ~15**, and is expected to span **two Colab sessions**
+> (re-run the identical command against a fresh URL; the cache resumes). Calls: seeded ~3,339 +
 > difficulty ~360 + trajectory 822 + simulated ~649. The commands below run unchanged against
 > the active path; only **`--concurrency` drops 32 → 16**, because the server was launched with
 > exactly 16 slots (`n_slots = 16`) and 32 merely queues. The "≈46,000 candidates" arithmetic
