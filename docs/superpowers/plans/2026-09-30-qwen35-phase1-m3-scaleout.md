@@ -2865,6 +2865,12 @@ is free for phase 2.
 > the cut is proportional rather than `DOMAIN_SHARE`-rebalanced, Step 4's §11.5 share check will
 > still report the uncensored shortfall the full corpus already carried — a recorded supply
 > ceiling, not a regression.
+>
+> **The two-phase split is collapsed for this cut.** Any `--mode all` slice runs the uncapped
+> difficulty/trajectory/simulated passes in full, so a "cheap Phase 1" is impossible — `--limit`
+> only trims the seeded pass. Run the **Phase 2 command once** (it is ~15 h and the cache makes
+> any interruption resumable); read the pass rates from the resulting manifest in Step 4 rather
+> than from a separate phase-1 session.
 
 **Phase 1.** Answer a few hundred candidates per domain and read the real rates. The numbers
 below are illustrative of the shape, not a budget — size the slice so the smallest domain
