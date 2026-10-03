@@ -2521,6 +2521,12 @@ git commit -m "feat(dataset): re-anchor source caps on M2's measured pass rates"
 
 M3's accepted target is 25,000 examples, so the *candidate* pool has to be the re-anchored one from Task 6, not M1's 3,000-prompt milestone corpus. This task regenerates it and re-invents the Magpie pools at scale.
 
+> **Superseded by the 2026-10-03 scope cut.** This task built the full 38,999-prompt corpus
+> measured below; that corpus is preserved at `datasets/qwen35-4b-sft-full/`. The active
+> `datasets/qwen35-4b-sft/` is now a proportional 1/12 subset sized for a single-L4 Task 8 —
+> see the scope-cut callout in Task 8 Step 3. Every figure below describes the full corpus, not
+> the active one.
+
 - [x] **Step 1: Bring up the local student server for exact token counts**
 
 The pipeline counts tokens exactly only if `llama-server` on 8085 is up; without it the manifest records a `chars/4` estimate. Start it as in the M1 rebuild guide:
@@ -2832,6 +2838,34 @@ caps are still the spec's §7 values and the pass rates are unknown. Phase 1 buy
 knowledge at a small share of the budget, and its calls are cached, so anything it generates
 is free for phase 2.
 
+> **SCOPE CUT (2026-10-03) — the active corpus is a 1/12 derivative; run at `--concurrency 16`.**
+> The live T3 Step 7 measurement (see its deviation note) caps this L4 + llama.cpp stack at
+> ~48 tok/s aggregate: the full 38,999-prompt corpus is ~62,000 teacher calls (~180 h). Two
+> passes are the reason and neither is bounded by `--limit`: `run_difficulty` judges every
+> oracle prompt in `TRAIN_POOLS` (2,396 of them) at `k=2`, and `run_simulated` seeds from every
+> tool-carrying trajectory (12,579). So the cut is of the **pools**, per this step's own rule.
+>
+> The full corpus is archived at **`datasets/qwen35-4b-sft-full/`**; the active
+> `datasets/qwen35-4b-sft/` is a proportional, domain-preserving **1/12** subset, with `images/`
+> a junction into the archive:
+>
+> | pool | full | active |
+> |---|---|---|
+> | `prompts/train.jsonl` | 38,999 | 3,250 (65 tools, 112 oracle) |
+> | `prompts/val.jsonl` | 1,068 | 89 |
+> | `verification/seeds.jsonl` | 1,001 | 83 (all oracle) |
+> | `prompts/trajectories.jsonl` | 16,300 | 1,358 (497 shippable / 861 seed-only / 1,053 tool-carrying) |
+> | `prompts/magpie.jsonl` | 6 | 6 |
+>
+> Estimated **~5,300 calls ≈ 15 h** at 48 tok/s (~500 output tok/call): seeded ~3,339 +
+> difficulty ~390 + trajectory 497 + simulated ~1,053. The commands below run unchanged against
+> the active path; only **`--concurrency` drops 32 → 16**, because the server was launched with
+> exactly 16 slots (`n_slots = 16`) and 32 merely queues. The "≈46,000 candidates" arithmetic
+> further down is the *uncut* full-scope figure and no longer describes the active pool. Because
+> the cut is proportional rather than `DOMAIN_SHARE`-rebalanced, Step 4's §11.5 share check will
+> still report the uncensored shortfall the full corpus already carried — a recorded supply
+> ceiling, not a regression.
+
 **Phase 1.** Answer a few hundred candidates per domain and read the real rates. The numbers
 below are illustrative of the shape, not a budget — size the slice so the smallest domain
 gets at least ~200 attempts, which is the bar `anchor.py` now enforces:
@@ -2840,7 +2874,7 @@ gets at least ~200 attempts, which is the bar `anchor.py` now enforces:
 Start-Process -FilePath "$HOME\miniconda3\envs\dataset\python.exe" `
   -ArgumentList @("-m","tools.dataset.generate","--mode","all","--root","datasets/qwen35-4b-sft",
                   "--base-url",$env:TEACHER_URL,"--api-key",$env:TEACHER_API_KEY,
-                  "--model","ornith-teacher","--concurrency","32","--timeout","1800",
+                  "--model","ornith-teacher","--concurrency","16","--timeout","1800",
                   "--cache","datasets/qwen35-4b-sft/m2/cache.jsonl",
                   "--limit","800","--val-limit","0","--magpie-limit","0") `
   -RedirectStandardOutput "$env:TEMP\opencode\m3-phase1.log" `
@@ -2849,21 +2883,17 @@ Start-Process -FilePath "$HOME\miniconda3\envs\dataset\python.exe" `
 
 Then read `m2/seeded.stats.json` and the manifest: `pass_rate_by_source`, and the observed
 **tokens/second** (total output tokens over wall-clock, from the log's first and last
-timestamps). To turn a projection into a measurement, run two small slices through **two
-separate caches** at two concurrency settings — the same slice replayed from a warm cache would
-measure nothing:
+timestamps).
 
-```powershell
-& "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.generate --mode all --root datasets/qwen35-4b-sft --base-url $env:TEACHER_URL --api-key $env:TEACHER_API_KEY --limit 200 --val-limit 0 --magpie-limit 0 --cache "$env:TEMP\opencode\perf-32.jsonl" --concurrency 32
-& "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.generate --mode all --root datasets/qwen35-4b-sft --base-url $env:TEACHER_URL --api-key $env:TEACHER_API_KEY --limit 200 --val-limit 0 --magpie-limit 0 --cache "$env:TEMP\opencode\perf-48.jsonl" --concurrency 48
-```
-
-Take the better setting as phase 2's `--concurrency`. Decode on this model is weight-bound —
-each step reads the 5.34 GB of weights, so aggregate throughput is roughly
-`steps_per_second × batch` — which is why the plan's earlier `--concurrency 12` implied ~43 h
-for the full pass while 32-48 implies 11-16 h. The server's `--max-num-seqs` must be at least
-as large as the driver's concurrency, or it queues what the driver sends and the measurement
-reports the lower number.
+**The concurrency sweep is already run and settled (T3 Step 7 deviation, 2026-10-03).** Slices
+through separate caches measured conc1 34.2 / conc8 47.1 / conc16 51.8 tok/s — a ~1.5× ceiling,
+not the 8–16× this section originally assumed. The reasoning that used to sit here ("decode is
+weight-bound, so aggregate throughput is roughly `steps_per_second × batch`") is **wrong for this
+model**: Qwen3.5 is hybrid, and its recurrent layers decode sequentially per sequence, so the
+batch never becomes compute-bound and aggregate throughput sits near single-stream speed however
+concurrency is set. Use **`--concurrency 16`** — the server's `n_slots = 16`, so anything higher
+only queues — and size the pass from the 48 tok/s measurement, which the scope-cut table above
+already does. The server's `--max-num-seqs` must still be at least the driver's concurrency.
 
 Two decisions come out of phase 1 and nothing else may overrule them:
 
@@ -2897,7 +2927,7 @@ form of the command in this plan — do not also run a foreground copy:
 Start-Process -FilePath "$HOME\miniconda3\envs\dataset\python.exe" `
   -ArgumentList @("-m","tools.dataset.generate","--mode","all","--root","datasets/qwen35-4b-sft",
                   "--base-url",$env:TEACHER_URL,"--api-key",$env:TEACHER_API_KEY,
-                  "--model","ornith-teacher","--concurrency","32","--timeout","1800",
+                  "--model","ornith-teacher","--concurrency","16","--timeout","1800",
                   "--cache","datasets/qwen35-4b-sft/m2/cache.jsonl",
                   "--limit","39000","--val-limit","1067","--magpie-limit","0") `
   -RedirectStandardOutput "$env:TEMP\opencode\m3-run.log" `
