@@ -102,7 +102,8 @@ def serve_vllm(tokenizer: str) -> subprocess.Popen:
     return subprocess.Popen(cmd, shell=True, env=os.environ)
 
 
-def serve_llama_cpp(ctx_size: int, slots: int) -> subprocess.Popen:
+def serve_llama_cpp(ctx_size: int, slots: int,
+                    kv_quant: str | None = None) -> subprocess.Popen:
     """Fallback: same weights and projector, no continuous batching. Spec section 10.
 
     The flags after `-np` are not optional. `--jinja` is what makes llama-server apply the
@@ -121,14 +122,19 @@ def serve_llama_cpp(ctx_size: int, slots: int) -> subprocess.Popen:
     """
     sh("git clone -q --depth 1 https://github.com/ggml-org/llama.cpp /content/llama.cpp "
        "|| true")
+    # `-DCMAKE_CUDA_ARCHITECTURES=89` pins the build to the L4 (Ada, sm_89). ggml's
+    # default arch list can otherwise compile kernels the L4 only runs through PTX JIT,
+    # which is slower; the flag is free and this launcher only ever targets an L4.
     sh("cmake -S /content/llama.cpp -B /content/llama.cpp/build -DGGML_CUDA=ON "
-       "-DLLAMA_CURL=OFF > /dev/null && "
+       "-DLLAMA_CURL=OFF -DCMAKE_CUDA_ARCHITECTURES=89 > /dev/null && "
        "cmake --build /content/llama.cpp/build --target llama-server -j 8 > /dev/null")
+    kv = f"-ctk {kv_quant} -ctv {kv_quant} " if kv_quant else ""
     cmd = (f"/content/llama.cpp/build/bin/llama-server "
            f"-m {shlex.quote(str(LOCAL_MODELS / TEXT_GGUF))} "
            f"--mmproj {shlex.quote(str(LOCAL_MODELS / MMPROJ_GGUF))} "
            f"--alias {SERVED_NAME} --host 127.0.0.1 --port {PORT} "
            f"--api-key $TEACHER_API_KEY -ngl 99 -fa on "
+           f"{kv}"
            f"-c {ctx_size} -np {slots} "
            f"--jinja --reasoning-format deepseek --reasoning-preserve "
            f"--reasoning-budget 6144")
@@ -283,6 +289,10 @@ def main() -> int:
                     help="llama.cpp only: parallel sequences. Throughput is ~45 t/s x slots; "
                          "each slot gets ctx-size/slots tokens. 16 -> 16384 per row, "
                          "32 -> 8192 per row at about twice the speed.")
+    ap.add_argument("--kv-quant", choices=["none", "q8_0", "q4_0"], default="none",
+                    help="llama.cpp only: quantize the KV cache (-ctk/-ctv). q8_0 roughly "
+                         "halves KV memory and per-step KV bandwidth, which can help "
+                         "long-context decode; none keeps the accepted full-precision line.")
     ap.add_argument("--tokenizer", default=None,
                     help="HF repo whose tokenizer matches the GGUF; see Task 1 Step 5. vLLM "
                          "needs it because converting a tokenizer out of a GGUF is lossy. "
@@ -304,7 +314,8 @@ def main() -> int:
     stage_weights()
 
     proc = (serve_vllm(args.tokenizer) if args.engine == "vllm"
-            else serve_llama_cpp(args.ctx_size, args.slots))
+            else serve_llama_cpp(args.ctx_size, args.slots,
+                                 None if args.kv_quant == "none" else args.kv_quant))
     try:
         wait_for_health(proc)
         if not smoke():
