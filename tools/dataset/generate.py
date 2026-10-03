@@ -30,12 +30,20 @@ def _seed(text: str) -> int:
 
 
 def _map(fn, items, concurrency: int):
-    """Order-preserving map. `concurrency <= 1` runs inline, so the M2 path is unchanged."""
+    """Order-preserving, streaming map. `concurrency <= 1` runs inline, so the M2 path is unchanged.
+
+    Yields in input order as results complete, so the caller's `_progress` heartbeat ticks
+    while a pool is being processed instead of bursting at the end. This must be a generator:
+    `list(pool.map(...))` would compute the whole pool before yielding a single row, which is
+    exactly the silence `_progress` exists to remove.
+    """
     if concurrency <= 1 or len(items) <= 1:
-        return [fn(item) for item in items]
+        for item in items:
+            yield fn(item)
+        return
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
-        return list(pool.map(fn, items))
+        yield from pool.map(fn, items)
 
 
 def _progress(rel: str, done: int, total: int, stats: dict, every: int = 100) -> None:
@@ -690,12 +698,20 @@ def smoke() -> int:
                  and not _aborts({"seeded": {"attempted": 0, "drops": {}}}))
     print("outage guard blocks gutted merge:", outage_ok)
 
+    # `_map` must stream. A list-returning `_map` computed the whole pool before yielding, so
+    # `_progress` only burst at the end and a live run looked hung. Guard the laziness.
+    import inspect
+
+    lazy_ok = inspect.isgenerator(_map(lambda x: x, [1, 2, 3], concurrency=2))
+    print("map streams lazily:", lazy_ok)
+
     ok = (stats["accepted"] == 1
           and len(rejected) == 1
           and rejected[0]["reason"] == "verify_failed" and has_completion
           and mixed["accepted"] == 1 and not dict(mixed["drops"])
           and failed["accepted"] == 0 and failed["drops"]["all_fail"] == 1
           and outage_ok
+          and lazy_ok
           and validate(canonical.example_from_dict(first)) == [])
     return 0 if ok else 1
 
