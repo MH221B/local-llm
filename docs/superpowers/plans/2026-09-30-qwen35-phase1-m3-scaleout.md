@@ -2857,10 +2857,11 @@ is free for phase 2.
 > | `prompts/trajectories.jsonl` | 16,300 | 1,358 (822 shippable / 536 seed-only / 649 tool-carrying) — 50/50 |
 > | `prompts/magpie.jsonl` | 6 | 6 |
 >
-> Measured live (2026-10-03) — **~1,660 output tok/call** and ~3 new calls/min — so the
-> ~5,200-call pass is **~29 h, not ~15**, and is expected to span **two Colab sessions**
-> (re-run the identical command against a fresh URL; the cache resumes). Calls: seeded ~3,339 +
-> difficulty ~360 + trajectory 822 + simulated ~649. The commands below run unchanged against
+> Measured live (2026-10-03) — **~41 tok/s aggregate** (matches T3 Step 7's ~48 on the smoke
+> fixture) and a heavy-tailed output length (mean ~1,500, median ~800 tok/call over 109 samples)
+> — so the ~5,200-call pass is **~35-50 h**, i.e. **~3 Colab sessions**, not the ~15 h first
+> projected from a ~500 tok/call guess. Re-run the identical command against a fresh URL; the
+> cache resumes. Calls: seeded ~3,339 + difficulty ~360 + trajectory 822 + simulated ~649. The commands below run unchanged against
 > the active path; only **`--concurrency` drops 32 → 16**, because the server was launched with
 > exactly 16 slots (`n_slots = 16`) and 32 merely queues. The "≈46,000 candidates" arithmetic
 > further down is the *uncut* full-scope figure and no longer describes the active pool.
