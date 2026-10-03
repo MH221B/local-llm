@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -466,6 +467,33 @@ def _dump_stats(path: Path, stats: dict) -> None:
     path.write_text(json.dumps(serial, indent=2), encoding="utf-8")
 
 
+OUTAGE_TEACHER_ERROR_SHARE = 0.5
+
+
+def _guard_teacher_outage(stats_by_stage: dict) -> None:
+    """Refuse to merge when a stage mostly failed on the endpoint.
+
+    A tunnel or Colab session that dies mid-run turns every remaining call into
+    `teacher_error`. The passes still "complete": `run_seeded` writes `single.jsonl` with the
+    few rows that succeeded, and `run_merge` would then overwrite `train.jsonl` with that
+    gutted set while exiting 0. Measured 2026-10-03 — 2,742/3,428 seeded attempts and 100% of
+    difficulty/trajectory/simulated were `teacher_error`, and the merge shipped 679 rows and
+    an empty val. This guard makes that merge fail loudly instead. Set `M3_FORCE_MERGE=1` to
+    override when a high error share is deliberate.
+    """
+    if os.environ.get("M3_FORCE_MERGE") == "1":
+        return
+    for stage, s in stats_by_stage.items():
+        attempted = (s or {}).get("attempted", 0)
+        err = ((s or {}).get("drops") or {}).get("teacher_error", 0)
+        if attempted and err / attempted > OUTAGE_TEACHER_ERROR_SHARE:
+            raise SystemExit(
+                f"run_merge: {stage} lost {err}/{attempted} attempts to teacher_error "
+                f"({err / attempted:.0%}); the endpoint was down. Refusing to overwrite "
+                f"train.jsonl with a gutted corpus. Bring the endpoint back and re-run, or "
+                f"set M3_FORCE_MERGE=1 to merge the rows that did succeed.")
+
+
 def run_merge(*, root: Path) -> dict:
     # Training rows are Examples: `example_from_dict` is the right loader for all three
     # shards, including the trajectory ones. A `Trajectory`'s `verify` spec is a
@@ -504,6 +532,14 @@ def run_merge(*, root: Path) -> dict:
         # interrupted endpoint from silently shrinking the corpus.
         decided = {v["id"] for v in judged if v["verdict"] != "teacher_error"}
         train = [ex for ex in train if ex.id not in decided] + survivors
+    # Before any write: a mid-run endpoint outage must not silently gut the shipped corpus.
+    # Placed after the verdict guard above so a partial difficulty pass is still reported as
+    # such, and before the writes so `train.jsonl` is untouched when this raises.
+    _guard_teacher_outage({
+        stage: (json.loads((root / "m2" / f"{stage}.stats.json").read_text(encoding="utf-8"))
+                if (root / "m2" / f"{stage}.stats.json").exists() else {})
+        for stage in ("seeded", "trajectory", "simulated", "difficulty")
+    })
     if not train:
         raise SystemExit("merge produced no train rows; refusing to overwrite train.jsonl")
     accepted_before = len(train)
@@ -639,11 +675,27 @@ def smoke() -> int:
     mixed = diff_case(FlakyTeacher(), "mixed")
     failed = diff_case(FlakyTeacher(always_fail=True), "all-fail")
 
+    # Outage guard: a stage that mostly failed on the endpoint must block the merge; a normal
+    # shortfall and an empty stage must not.
+    def _aborts(stats):
+        try:
+            _guard_teacher_outage(stats)
+            return False
+        except SystemExit:
+            return True
+
+    outage_ok = (_aborts({"seeded": {"attempted": 100, "drops": {"teacher_error": 90}}})
+                 and _aborts({"trajectory": {"attempted": 10, "drops": {"teacher_error": 10}}})
+                 and not _aborts({"seeded": {"attempted": 100, "drops": {"teacher_error": 10}}})
+                 and not _aborts({"seeded": {"attempted": 0, "drops": {}}}))
+    print("outage guard blocks gutted merge:", outage_ok)
+
     ok = (stats["accepted"] == 1
           and len(rejected) == 1
           and rejected[0]["reason"] == "verify_failed" and has_completion
           and mixed["accepted"] == 1 and not dict(mixed["drops"])
           and failed["accepted"] == 0 and failed["drops"]["all_fail"] == 1
+          and outage_ok
           and validate(canonical.example_from_dict(first)) == [])
     return 0 if ok else 1
 

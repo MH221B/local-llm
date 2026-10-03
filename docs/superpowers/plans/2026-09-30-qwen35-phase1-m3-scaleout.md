@@ -2974,6 +2974,13 @@ most the calls in flight. Two rules: do not delete the cache file (back it up in
 do not re-run against a *stale* URL — the `/health` preflight refuses it rather than letting
 every row become `teacher_error` and the merge overwrite the corpus with a gutted one.
 
+A URL that is healthy at launch and dies **mid-run** is not caught by that preflight, so
+`run_merge` now calls `_guard_teacher_outage` and refuses to write when any stage loses more
+than half its attempts to `teacher_error`. Measured 2026-10-03: a mid-seeded tunnel death left
+2,742/3,428 seeded attempts and 100% of difficulty/trajectory/simulated as `teacher_error`, and
+the pre-guard merge shipped `train 679, val 0`. The guard aborts that merge instead; override
+with `M3_FORCE_MERGE=1` when a high error share is deliberate.
+
 - [ ] **Step 4: Read the pass rates and the drop reasons**
 
 ```powershell
