@@ -7,9 +7,11 @@ sandbox — run generation and verification on a disposable environment/profile.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 
 _FENCE = "`" * 3
 _CODE_FENCE = re.compile(_FENCE + r"(?:python)?\s*(.*?)" + _FENCE, re.S)
@@ -46,11 +48,26 @@ def extract_code(completion: str, name: str | None = None) -> str:
 
 
 def run_python(source: str, stdin: str = "", timeout: float = 10.0) -> tuple[bool, str]:
+    # The program goes in a temp file, not `python -c <source>`: Windows caps a command line
+    # at ~32k chars, and a long generated solution (13-15k tokens) blew that limit and killed
+    # a whole M3 run with `FileNotFoundError: [WinError 206]`. `stdin` must stay free for the
+    # program's own input (check_python_io feeds test cases there), so a file is the fix.
+    path = None
     try:
-        proc = subprocess.run([sys.executable, "-c", source], input=stdin,
-                              capture_output=True, text=True, timeout=timeout)
+        fd, path = tempfile.mkstemp(suffix=".py", prefix="m3verify-")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(source)
+        proc = subprocess.run([sys.executable, path], input=stdin,
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=timeout)
     except subprocess.TimeoutExpired:
         return False, "timeout"
+    finally:
+        if path is not None:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
     if proc.returncode != 0:
         tail = (proc.stderr or proc.stdout).strip().splitlines()
         return False, f"exit {proc.returncode}: {tail[-1] if tail else 'no output'}"
@@ -209,6 +226,12 @@ if __name__ == "__main__":
     io_ok, _ = check_python_io("print(sum(map(int, input().split())))", [["1 2", "3"]])
     print("tests positive:", ok, "| negative:", bad, "|", why_bad)
     print("io positive:", io_ok)
+
+    # Regression: a program longer than Windows' ~32k-char command line must not crash the
+    # run with WinError 206 (it goes in a temp file now, not a `-c` argv).
+    long_src = "x = 1\n" * 8000 + "print(x)"
+    long_ok, long_info = run_python(long_src)
+    print("long source (>32k chars):", long_ok, "|", long_info.strip(), "| chars:", len(long_src))
     print("answer match:", check_answer("<think>\n4\n</think>\n\n\\boxed{4}", "4"))
     print("answer mismatch:", check_answer("The answer is 5.", "4"))
     print("prose numeric answer:", check_answer("James made **$126** from selling all the water.", "126"))
