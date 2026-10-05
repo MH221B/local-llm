@@ -15,6 +15,8 @@ import time
 import urllib.error
 import urllib.request
 
+from .canonical import normalize_tools
+
 # Spec section 10 sampling, with the anti-repetition pair the teacher's parent model
 # publishes (ornith-ai/Ornith-1.5-9B): presence_penalty 1.5 for general tasks and 0.0 for
 # precise coding, min_p 0.0 (not llama.cpp's 0.05 default). The teacher inherits
@@ -214,7 +216,7 @@ class TeacherClient:
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         if tools:
-            payload["tools"] = tools
+            payload["tools"] = normalize_tools(tools)
         if seed is not None:
             payload["seed"] = seed
         reply = self._post_retry("/v1/chat/completions", payload, stream=True)

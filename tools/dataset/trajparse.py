@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 
-from .canonical import Trajectory
+from .canonical import Trajectory, normalize_tool_schema
 from .adapters.base import Ctx, system_msg, user_msg, assistant_msg, text_part
 
 HERMES_DATASET = "NousResearch/hermes-function-calling-v1"
@@ -202,7 +202,7 @@ def _toolace_schema(system: str) -> list | None:
             continue
         tools.append({"type": "function", "function": {
             "name": entry["name"], "description": entry.get("description", ""),
-            "parameters": entry.get("parameters", {})}})
+            "parameters": normalize_tool_schema(entry.get("parameters", {}))}})
     return tools or None
 
 
@@ -312,7 +312,9 @@ if __name__ == "__main__":
     actx = Ctx(TOOLACE_DATASET, None, "coding", "apache-2.0")
     trow = {
         "system": 'You are an expert in composing functions. Here is a list of functions:\n'
-                  '[{"name": "Timezones", "description": "Get times.", "parameters": {}}]',
+                  '[{"name": "Timezones", "description": "Get times.", '
+                  '"parameters": {"type": "dict", "properties": '
+                  '{"timezone": {"type": "int"}}}}]',
         "conversations": [
             {"from": "user", "value": "What time is it in New York and Tokyo?"},
             {"from": "assistant", "value": '[Timezones(timezone="New York"), Timezones(timezone="Tokyo")]'},
@@ -326,3 +328,4 @@ if __name__ == "__main__":
           "tool:", tt.messages[2]["tool_calls"][1]["function"]["arguments"])
     print("toolace tools:", len(tt.tools), "no-call row dropped:", build_toolace(
         {"system": "x", "conversations": [{"from": "user", "value": "hi"}]}, 10, actx))
+    print("toolace schema normalized:", tt.tools[0]["function"]["parameters"])

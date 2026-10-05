@@ -323,6 +323,51 @@ def iter_jsonl(path: Path) -> Iterator[dict]:
                 yield json.loads(line)
 
 
+# Sources carrying an embedded JSON tool schema (ToolACE via ShareGPT) spell the schema
+# with Python-ish type names -- `dict`, `int`, `float` -- which are not valid JSON Schema.
+# llama.cpp converts `tools` to a grammar and rejects the whole request otherwise; measured
+# `HTTP 500 {"message":"JSON schema error at #: unrecognized type dict"}` on every ToolACE
+# trajectory row. Coerce at the parse boundary so the canonical record holds the OpenAI form
+# the plan's example uses (`"type": "object"`).
+_SCHEMA_TYPE_ALIASES = {
+    "dict": "object", "int": "integer", "float": "number", "str": "string",
+    "text": "string", "bool": "boolean", "list": "array", "tuple": "array", "set": "array",
+}
+
+
+def normalize_tool_schema(schema: Any) -> Any:
+    """Recursively map non-standard JSON Schema `type` names to canonical ones.
+
+    Returns a new structure (the input is not mutated). An `array` that declares no `items`
+    gets a permissive `{}` so the grammar still builds.
+    """
+    if isinstance(schema, list):
+        return [normalize_tool_schema(v) for v in schema]
+    if not isinstance(schema, dict):
+        return schema
+    out = {k: normalize_tool_schema(v) for k, v in schema.items()}
+    t = out.get("type")
+    if isinstance(t, str) and t in _SCHEMA_TYPE_ALIASES:
+        out["type"] = _SCHEMA_TYPE_ALIASES[t]
+    if out.get("type") == "array" and "items" not in out:
+        out["items"] = {}
+    return out
+
+
+def normalize_tools(tools: Any) -> Any:
+    """Normalize every OpenAI tool entry's `function.parameters` schema (spec section 5.1)."""
+    if not tools:
+        return tools
+    out = []
+    for entry in tools:
+        fn = entry.get("function") if isinstance(entry, dict) else None
+        if isinstance(fn, dict) and "parameters" in fn:
+            entry = {**entry, "function": {**fn,
+                     "parameters": normalize_tool_schema(fn["parameters"])}}
+        out.append(entry)
+    return out
+
+
 def tool_calls_of(message: dict) -> list[dict]:
     calls = message.get("tool_calls")
     return calls if isinstance(calls, list) else []
@@ -519,6 +564,19 @@ if __name__ == "__main__":
     print("good:", validate(good))
     print("bad:", len(validate(bad)), "problems")
     print("prompt:", validate_prompt(prompt), [m["role"] for m in prompt.messages])
+
+    # ToolACE spells schema types Python-ish (`dict`/`int`/`float`); llama.cpp 500s on them.
+    _schema = {"type": "dict",
+               "properties": {"n": {"type": "int"}, "x": {"type": "float"}},
+               "required": ["n"]}
+    _norm = normalize_tool_schema(_schema)
+    print("normalize types:", _norm["type"], _norm["properties"]["n"]["type"],
+          _norm["properties"]["x"]["type"])
+    print("normalize leaves input untouched:", _schema["type"] == "dict")
+    print("normalize array gets items:", normalize_tool_schema({"type": "list"}))
+    print("normalize tools entry:",
+          normalize_tools([{"type": "function", "function": {
+              "name": "f", "parameters": {"type": "dict"}}}]))
 
     ok_traj = Trajectory(
         id="traj-1", domain="coding", origin="teacher", source={"name": "smoke"},
