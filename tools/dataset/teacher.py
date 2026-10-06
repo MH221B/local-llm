@@ -52,6 +52,21 @@ def _fold_reasoning(message: dict) -> dict:
     return message
 
 
+def _http_error_detail(exc: urllib.error.HTTPError) -> str:
+    """The server's own message for an HTTP error.
+
+    `str(HTTPError)` is only "HTTP Error 400: Bad Request"; llama.cpp's diagnosis (a
+    tool-call/tool-response mismatch, an over-long context, a schema it still dislikes) is
+    carried in the response body, which urllib never reads for us. Drain it here so the
+    failure is diagnosable instead of opaque.
+    """
+    try:
+        body = (exc.read() or b"").decode("utf-8", "replace").strip()
+    except Exception:
+        body = ""
+    return f"HTTP {exc.code}: {body[:500]}" if body else f"HTTP {exc.code}: {exc.reason or exc}"
+
+
 def to_wire_messages(messages: list[dict], store=None) -> list[dict]:
     """Canonical messages -> OpenAI chat messages, resolving image shas to data URIs."""
     out: list[dict] = []
@@ -173,15 +188,26 @@ class TeacherClient:
         return out
 
     def _post_retry(self, path: str, payload: dict, *, stream: bool = False) -> dict:
-        last: Exception | None = None
         attempts = 0
+        detail = "no attempt made"
         for attempt in range(1, self.retries + 1):
             attempts = attempt
             try:
                 return self._stream(payload) if stream else self._post(path, payload)
+            except urllib.error.HTTPError as exc:
+                # HTTPError subclasses URLError, so catch it first to read the body before
+                # anything else touches it. A 4xx is deterministic (bad request, context
+                # too long, a schema the grammar builder rejects): replaying the identical
+                # request burns the retry budget for nothing, so it is terminal. 5xx may be
+                # the edge or the tunnel and keeps the retries.
+                detail = _http_error_detail(exc)
+                if exc.code < 500:
+                    break
+                if attempt < self.retries:
+                    time.sleep(self.backoff * attempt)
             except (urllib.error.URLError, TimeoutError, ConnectionError,
                     json.JSONDecodeError) as exc:
-                last = exc
+                detail = str(exc)
                 # A timeout means the teacher is still generating. Retrying replays the
                 # same deterministic request and burns the same wall-clock again
                 # (measured: 3 x 900s = 45 min lost to one uncapped coding row), so a
@@ -190,7 +216,7 @@ class TeacherClient:
                     break
                 if attempt < self.retries:
                     time.sleep(self.backoff * attempt)
-        raise TeacherError(f"{path} failed after {attempts} attempt(s): {last}")
+        raise TeacherError(f"{path} failed after {attempts} attempt(s): {detail}")
 
     def props(self) -> dict:
         return self._get("/props")
@@ -233,6 +259,18 @@ if __name__ == "__main__":
     from PIL import Image
 
     from .imgstore import ImageStore
+
+    # Offline check first (no server needed): the HTTP-error body must be captured, or a
+    # 400 degrades to "HTTP Error 400: Bad Request" -- which is exactly what hid the
+    # toolace diagnosis during the M3 run.
+    import urllib.error
+    _err = urllib.error.HTTPError(
+        "http://x/v1/chat/completions", 400, "Bad Request", {},
+        io.BytesIO(b'{"error":{"message":"tool call count mismatch"}}'))
+    print("http error detail:", _http_error_detail(_err))
+    _err_nobody = urllib.error.HTTPError(
+        "http://x/v1/chat/completions", 500, "Internal Server Error", {}, io.BytesIO(b""))
+    print("http error detail (no body):", _http_error_detail(_err_nobody))
 
     url = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8086"
     client = TeacherClient(url, api_key=os.environ.get("TEACHER_API_KEY") or None)

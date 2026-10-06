@@ -93,7 +93,12 @@ def generate_prebuilt(prompt_traj: Trajectory, client: TeacherClient, cache,
         if calls:
             if not run:
                 return None  # a call with no observation to splice in
-            assistant["tool_calls"] = _remap(calls, prompt_traj.id, calls_made)
+            # The teacher re-generates each turn and may emit a different number of calls
+            # than the source conversation has observations for. `zip` below pairs calls
+            # with observations, so an uncapped surplus would leave the assistant declaring
+            # a call with no matching `tool` reply -- which llama.cpp rejects with HTTP 400
+            # on the following turn. Cap to what can actually be observed.
+            assistant["tool_calls"] = _remap(calls, prompt_traj.id, calls_made)[:len(run)]
             calls_made += len(assistant["tool_calls"])
             new.append(assistant)
             for call, src_tool in zip(assistant["tool_calls"], run):
@@ -204,6 +209,24 @@ if __name__ == "__main__":
     print("tool id:", out.messages[2]["tool_call_id"], "| problems:", validate_trajectory(out))
     print("teacher never saw the scaffold:", all(
         not any(m.get("_scaffold") for m in msgs) for msgs in fake.sent))
+
+    # The teacher may re-generate a different number of calls than the source has
+    # observations for. A surplus call must be capped to the observations available, or the
+    # produced turn declares a call with no matching `tool` reply (llama.cpp -> HTTP 400).
+    over_fake = FakeTeacher([
+        {"content": "<think>two calls</think>", "tool_calls": [
+            {"id": "x", "type": "function",
+             "function": {"name": "clock", "arguments": "{\"city\": \"Tokyo\"}"}},
+            {"id": "y", "type": "function",
+             "function": {"name": "clock", "arguments": "{\"city\": \"Osaka\"}"}}]},
+        {"content": "Both checked.", "tool_calls": []},
+    ])
+    over_cache = GenCache(Path(tempfile.mkdtemp()) / "o.jsonl")
+    over = generate_prebuilt(src, over_fake, over_cache)
+    over_calls = len(over.messages[1].get("tool_calls") or [])
+    over_tools = sum(1 for m in over.messages if m.get("role") == "tool")
+    print("over-call capped:", over_calls, "tool replies:", over_tools,
+          "| problems:", validate_trajectory(over))
 
     # Render the generated trajectory through the student template. This is the check that
     # catches the string-vs-mapping `arguments` mismatch: the template iterates
