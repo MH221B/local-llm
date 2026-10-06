@@ -93,11 +93,8 @@ def generate_prebuilt(prompt_traj: Trajectory, client: TeacherClient, cache,
         if calls:
             if not run:
                 return None  # a call with no observation to splice in
-            # The teacher re-generates each turn and may emit a different number of calls
-            # than the source conversation has observations for. `zip` below pairs calls
-            # with observations, so an uncapped surplus would leave the assistant declaring
-            # a call with no matching `tool` reply -- which llama.cpp rejects with HTTP 400
-            # on the following turn. Cap to what can actually be observed.
+            # The teacher may emit more calls than the source has observations for; keep
+            # only the calls that can be observed (`zip` below pairs them one-to-one).
             assistant["tool_calls"] = _remap(calls, prompt_traj.id, calls_made)[:len(run)]
             calls_made += len(assistant["tool_calls"])
             new.append(assistant)
@@ -105,6 +102,14 @@ def generate_prebuilt(prompt_traj: Trajectory, client: TeacherClient, cache,
                 new.append({"role": "tool", "content": src_tool.get("content", ""),
                             "tool_call_id": call["id"]})
         else:
+            # A regenerated answer where the source called a tool drops that observation
+            # (`i` skips the run below). If the previous message is then already an
+            # assistant, appending this one puts two assistant messages adjacent: llama.cpp
+            # rejects a request that ends with two ("Cannot have 2 or more assistant
+            # messages at the end of the list"), and the student template folds them. End
+            # the trajectory at the previous assistant instead of building that shape.
+            if new and new[-1].get("role") == "assistant":
+                break
             new.append(assistant)
         i += 1 + len(run)
 
@@ -227,6 +232,22 @@ if __name__ == "__main__":
     over_tools = sum(1 for m in over.messages if m.get("role") == "tool")
     print("over-call capped:", over_calls, "tool replies:", over_tools,
           "| problems:", validate_trajectory(over))
+
+    # Mirror case: the teacher answers where the source called a tool. The observation is
+    # skipped, and the following source assistant would land adjacent to this one -- the
+    # shape llama.cpp rejects with HTTP 400. The trajectory must stop at the previous
+    # assistant instead of emitting two in a row.
+    decline_fake = FakeTeacher([
+        {"content": "It is 04:00 in Tokyo.", "tool_calls": []},
+        {"content": "Anything else?", "tool_calls": []},
+    ])
+    decline_cache = GenCache(Path(tempfile.mkdtemp()) / "d.jsonl")
+    decline = generate_prebuilt(src, decline_fake, decline_cache)
+    d_roles = [m["role"] for m in decline.messages]
+    d_adj = any(d_roles[k] == d_roles[k + 1] == "assistant"
+                for k in range(len(d_roles) - 1))
+    print("declined turn:", d_roles, "| adjacent assistants:", d_adj,
+          "| problems:", validate_trajectory(decline))
 
     # Render the generated trajectory through the student template. This is the check that
     # catches the string-vs-mapping `arguments` mismatch: the template iterates
