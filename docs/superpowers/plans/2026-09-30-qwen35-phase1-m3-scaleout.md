@@ -2831,7 +2831,7 @@ has verdict slot: True
 coverage line: ['- examples drawn from un-oracled columns: 2']
 ```
 
-- [ ] **Step 3: Run M3 in two phases: measure, then spend**
+- [x] **Step 3: Run M3 in two phases: measure, then spend**
 
 The run is split because Task 6 could not re-anchor: M2 left 12 single-turn attempts, so the
 caps are still the spec's §7 values and the pass rates are unknown. Phase 1 buys that
@@ -2981,7 +2981,7 @@ than half its attempts to `teacher_error`. Measured 2026-10-03: a mid-seeded tun
 the pre-guard merge shipped `train 679, val 0`. The guard aborts that merge instead; override
 with `M3_FORCE_MERGE=1` when a high error share is deliberate.
 
-- [ ] **Step 4: Read the pass rates and the drop reasons**
+- [x] **Step 4: Read the pass rates and the drop reasons**
 
 ```powershell
 $m = Get-Content datasets/qwen35-4b-sft/manifest.json | ConvertFrom-Json
@@ -3030,7 +3030,7 @@ shortfall is large enough to matter, rebalance the other domains' caps and re-ru
 
 `image_bearing_share` will sit near 0.09 rather than §7.6's 0.12: M1 realises less than the estimate because the image configs are quota-limited, per the rebuild guide. Record the deviation rather than adjusting a filter to chase the number.
 
-- [ ] **Step 5: Verify every accepted record and its image refs**
+- [x] **Step 5: Verify every accepted record and its image refs**
 
 Run from the repo root, one line:
 
@@ -3040,7 +3040,7 @@ Run from the repo root, one line:
 
 Expected: `checked N bad 0` — 100% schema-valid and every image sha resolves (spec §11.3).
 
-- [ ] **Step 6: Confirm the difficulty filter actually removed rows**
+- [x] **Step 6: Confirm the difficulty filter actually removed rows**
 
 The filter's claim is that it dropped every all-pass and all-fail prompt. Verify against the
 *verdicts*, not the survivors — a check written against the survivors passes vacuously, which
@@ -3056,7 +3056,7 @@ Both zeros matter. The first is the bug this task fixes: a non-zero count means 
 consulting the verdicts. The second means the survivors are actually in the corpus. `D` equal
 to `all_pass + all_fail` is the consistency check on the stats block.
 
-- [ ] **Step 7: Export calibration chunks**
+- [x] **Step 7: Export calibration chunks**
 
 ```powershell
 & "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.calibrate --dataset datasets/qwen35-4b-sft/train.jsonl --out datasets/qwen35-4b-sft/calibration.txt --chunks 200
@@ -3064,7 +3064,7 @@ to `all_pass + all_fail` is the consistency check on the stats block.
 
 Expected: `calibration chunks written: N -> ...` with `N > 0`. Spec §3 sizes this at ~200 chunks for Phase 3's `llama-imatrix`. If `N` is below ~150, record the shortfall and the token total in the guide: imatrix quality scales with coverage, and the fix is more data, not a different chunk size.
 
-- [ ] **Step 8: Re-run the render gate and the contamination guard**
+- [x] **Step 8: Re-run the render gate and the contamination guard**
 
 Two separate render invocations. `--multiturn` returns from the multi-turn report before the
 single-turn checks run, so one combined command cannot produce both sets of output:
@@ -3091,7 +3091,7 @@ expected outcome, not a failed gate. The acceptance condition is the *exact* cou
 of one corpus, so spec §8's intended in-distribution overlap surfaces as NEAR. A non-zero
 *exact* count is the failure — do not ship it, and do not "fix" it by loosening the guard.
 
-- [ ] **Step 9: Generate the sample audit and read it**
+- [x] **Step 9: Generate the sample audit and read it**
 
 ```powershell
 & "$HOME\miniconda3\envs\dataset\python.exe" -m tools.dataset.audit --dataset datasets/qwen35-4b-sft/train.jsonl --per-domain 10 --out datasets/qwen35-4b-sft/audit.md
@@ -3106,7 +3106,7 @@ later reader compares 40 against the spec's 20 and assumes one of them is wrong.
 
 Then **actually read `datasets/qwen35-4b-sft/audit.md`** and fill in the verdict slots. This is the step the skipped judge would have replaced, and it is the only quality signal the un-oracled columns get. Record the outcome — how many `ok`, `fix`, `drop`, and what the failures had in common — because it goes in the guide and it is the evidence for Task 6's caps next milestone.
 
-- [ ] **Step 10: Update the rebuild guide**
+- [x] **Step 10: Update the rebuild guide**
 
 Append a `## M3 — scale-out` section to `docs/qwen35-4b-sft-rebuild.md`, the tracked guide M2 already extended. Do **not** write it to `datasets/qwen35-4b-sft/README.md`: `.gitignore` line 8 is `datasets/`, so that file is untrackable and Step 11's `git add` would refuse it. The section contains:
 
